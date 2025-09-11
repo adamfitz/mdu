@@ -3,15 +3,19 @@ package cli
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"mdu/metadata"
+	"mdu/parser"
 )
 
 func NewRootCmd() *cobra.Command {
 	var file string
 	var listFields bool
+	var all bool
+	var output string
 
 	rootCmd := &cobra.Command{
 		Use:   "mdu",
@@ -34,17 +38,28 @@ func NewRootCmd() *cobra.Command {
 			if file == "" {
 				log.Fatal("You must specify --file")
 			}
-			md, err := metadata.Read(file)
+
+			md, err := metadata.Read(file, all)
 			if err != nil {
 				log.Fatalf("Error reading metadata: %v", err)
 			}
-			for k, v := range md {
-				fmt.Printf("%s: %s\n", k, v)
+
+			rendered := parser.RenderMetadataOutput(md)
+			fmt.Printf("\n%s", rendered)
+
+			if output != "" {
+				if err := os.WriteFile(output, []byte(rendered), 0644); err != nil {
+					log.Fatalf("Error writing output file: %v", err)
+				}
+				fmt.Printf("\nMetadata written to %s\n", output)
 			}
 		},
 	}
+
 	readCmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
 	readCmd.Flags().BoolVar(&listFields, "list-fields", false, "List all supported metadata fields")
+	readCmd.Flags().BoolVarP(&all, "all", "a", false, "Return all metadata fields, not just known ones")
+	readCmd.Flags().StringVarP(&output, "output", "o", "", "Write output to file instead of printing to console")
 
 	// --- Update command ---
 	var series, seriesIndex, summary, isbn, author string

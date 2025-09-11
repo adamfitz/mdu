@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -56,7 +57,7 @@ type Meta struct {
 // ---------- Public Functions ----------
 
 // Read extracts metadata fields from an EPUB file and returns them in a map.
-func Read(epubPath string) (map[string]string, error) {
+func Read(epubPath string, all bool) (map[string]string, error) {
 	r, err := zip.OpenReader(epubPath)
 	if err != nil {
 		return nil, err
@@ -103,33 +104,61 @@ func Read(epubPath string) (map[string]string, error) {
 		return nil, err
 	}
 
-	// Collect metadata
+	// Collect all metadata
 	result := make(map[string]string)
+
+	// Standard fields
 	if pkg.Metadata.Title != "" {
 		result["title"] = pkg.Metadata.Title
 	}
 	if pkg.Metadata.Creator != "" {
-		result["creator"] = pkg.Metadata.Creator
+		result["author"] = pkg.Metadata.Creator
 	}
 	if pkg.Metadata.Description != "" {
 		result["summary"] = pkg.Metadata.Description
 	}
 
+	// Identifiers
 	for _, id := range pkg.Metadata.Identifier {
+		key := id.Value
 		if strings.EqualFold(id.Scheme, "isbn") {
-			result["isbn"] = id.Value
-		} else if id.Value != "" {
-			result["identifier:"+id.Scheme] = id.Value
+			key = "isbn"
+		} else if id.Scheme != "" {
+			key = "identifier:" + id.Scheme
 		}
+		result[key] = id.Value
 	}
 
+	// Meta tags
 	for _, m := range pkg.Metadata.Meta {
 		if m.Name != "" {
 			result[m.Name] = m.Content
 		}
 	}
 
-	return result, nil
+	// If not --all, filter to only supported fields
+	if !all {
+		filtered := make(map[string]string)
+		for _, f := range SupportedFields {
+			if val, ok := result[f]; ok {
+				filtered[f] = val
+			}
+		}
+		result = filtered
+	}
+
+	// Sort keys alphabetically
+	sortedResult := make(map[string]string)
+	keys := make([]string, 0, len(result))
+	for k := range result {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		sortedResult[k] = result[k]
+	}
+
+	return sortedResult, nil
 }
 
 // Update applies metadata changes and writes a new EPUB file.
