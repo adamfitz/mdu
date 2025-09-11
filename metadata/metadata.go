@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// Caontains the metadata fields this tool can read/update.
+// Contains the metadata fields this tool can read/update
 var SupportedFields = []string{
 	"calibre:series",
 	"calibre:series_index",

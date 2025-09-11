@@ -3,12 +3,13 @@ package parser
 import (
 	"archive/zip"
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
-// Checks the magic bytes of a file to determine if it is an EPUB.
+// Checks if a file is a valid EPUB by inspecting its ZIP header and mimetype.
 func IsEpub(filePath string) (bool, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -16,26 +17,28 @@ func IsEpub(filePath string) (bool, error) {
 	}
 	defer f.Close()
 
-	// EPUB files are ZIP archives starting with "PK\x03\x04"
+	// Check ZIP magic bytes
 	header := make([]byte, 4)
-	if _, err := f.Read(header); err != nil {
+	if _, err := f.ReadAt(header, 0); err != nil {
 		return false, err
 	}
 	if !bytes.Equal(header, []byte("PK\x03\x04")) {
 		return false, nil
 	}
 
-	// Check for "mimetype" file inside the ZIP
+	// Get file size
 	stat, err := f.Stat()
 	if err != nil {
 		return false, err
 	}
 
+	// Create zip reader
 	zr, err := zip.NewReader(f, stat.Size())
 	if err != nil {
 		return false, err
 	}
 
+	// Look for "mimetype" file
 	for _, file := range zr.File {
 		if file.Name == "mimetype" {
 			rc, err := file.Open()
@@ -44,11 +47,12 @@ func IsEpub(filePath string) (bool, error) {
 			}
 			defer rc.Close()
 
-			buf := make([]byte, file.UncompressedSize64)
-			if _, err := rc.Read(buf); err != nil {
+			buf := make([]byte, 20)
+			n, err := io.ReadFull(rc, buf)
+			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 				return false, err
 			}
-			return string(buf) == "application/epub+zip", nil
+			return string(buf[:n]) == "application/epub+zip", nil
 		}
 	}
 
