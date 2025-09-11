@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -46,24 +44,6 @@ func padRight(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-len(s))
-}
-
-// Returns all .epub files in the given directory, sorted alphabetically.
-func ListEPUBFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var files []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".epub") {
-			files = append(files, filepath.Join(dir, entry.Name()))
-		}
-	}
-
-	sort.Strings(files)
-	return files, nil
 }
 
 // Returns a formatted string with a filename header
