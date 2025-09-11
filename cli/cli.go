@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -41,7 +42,7 @@ func NewRootCmd() *cobra.Command {
 
 			md, err := metadata.Read(file, all)
 			if err != nil {
-				log.Fatalf("Error reading metadata: %v", err)
+				log.Fatalf("Error reading metadata\n%v\n", err)
 			}
 
 			rendered := parser.RenderMetadataOutput(md)
@@ -62,14 +63,14 @@ func NewRootCmd() *cobra.Command {
 	readCmd.Flags().StringVarP(&output, "output", "o", "", "Write output to file instead of printing to console")
 
 	// --- Update command ---
-	var series, seriesIndex, summary, isbn, author string
+	var series, seriesIndex, summary, isbn, author, dir string
 
 	updateCmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update metadata fields in an EPUB file",
 		Run: func(cmd *cobra.Command, args []string) {
-			if file == "" {
-				log.Fatal("You must specify --file")
+			if file == "" && dir == "" {
+				log.Fatal("You must specify either --file or --dir")
 			}
 
 			updates := make(map[string]string)
@@ -93,10 +94,32 @@ func NewRootCmd() *cobra.Command {
 				log.Fatal("No metadata fields specified for update")
 			}
 
-			if err := metadata.Update(file, file, updates); err != nil {
-				log.Fatalf("Error updating EPUB: %v", err)
+			var allFiles []string
+			if dir != "" {
+				epubs, err := parser.ListEPUBFiles(dir)
+				if err != nil {
+					log.Fatalf("Error reading directory: %v", err)
+				}
+				allFiles = epubs
+			} else {
+				allFiles = []string{file}
 			}
-			fmt.Println("Metadata updated successfully")
+
+			for _, f := range allFiles {
+				if err := metadata.Update(f, f, updates); err != nil {
+					log.Printf("Error updating %s: %v", f, err)
+					continue
+				}
+				md, _ := metadata.Read(f, false) // read updated fields (known only)
+				outputStr := parser.RenderMetadataWithHeader(filepath.Base(f), md)
+				fmt.Print(outputStr)
+			}
+
+			if len(allFiles) > 1 {
+				fmt.Printf("Updated %d EPUB files in directory.\n", len(allFiles))
+			} else {
+				fmt.Println("Metadata updated successfully")
+			}
 		},
 	}
 
@@ -106,6 +129,7 @@ func NewRootCmd() *cobra.Command {
 	updateCmd.Flags().StringVar(&summary, "summary", "", "Book summary")
 	updateCmd.Flags().StringVar(&isbn, "isbn", "", "ISBN identifier")
 	updateCmd.Flags().StringVar(&author, "author", "", "Author/creator name")
+	updateCmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files for batch update")
 
 	rootCmd.AddCommand(readCmd, updateCmd)
 	return rootCmd

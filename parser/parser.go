@@ -1,11 +1,13 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// RenderMetadata formats metadata as a two-column table and returns it as a string.
+// Formats metadata as a two-column table and returns it as a string.
 // Both columns are left-aligned. The first column width is automatically adjusted
 // to the longest metadata key (minimum 20 characters).
 func RenderMetadataOutput(md map[string]string) string {
@@ -38,10 +40,37 @@ func RenderMetadataOutput(md map[string]string) string {
 	return sb.String()
 }
 
-// padRight pads a string with spaces on the right to the specified length
+// Pads a string with spaces on the right to the specified length
 func padRight(s string, width int) string {
 	if len(s) >= width {
 		return s
 	}
 	return s + strings.Repeat(" ", width-len(s))
+}
+
+// Returns all .epub files in the given directory, sorted alphabetically.
+func ListEPUBFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".epub") {
+			files = append(files, filepath.Join(dir, entry.Name()))
+		}
+	}
+
+	sort.Strings(files)
+	return files, nil
+}
+
+// Returns a formatted string with a filename header
+func RenderMetadataWithHeader(filename string, md map[string]string) string {
+	var sb strings.Builder
+	sb.WriteString("File: " + filename + "\n")
+	sb.WriteString(RenderMetadataOutput(md))
+	sb.WriteString("\n")
+	return sb.String()
 }
