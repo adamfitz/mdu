@@ -16,7 +16,7 @@ func NewRootCmd() *cobra.Command {
 	var file string
 	var listFields bool
 	var all bool
-	var output string
+	var output string // <- declare once here
 
 	rootCmd := &cobra.Command{
 		Use:   "mdu",
@@ -63,11 +63,11 @@ func NewRootCmd() *cobra.Command {
 	readCmd.Flags().StringVarP(&output, "output", "o", "", "Write output to file instead of printing to console")
 
 	// --- Update command ---
-	var series, seriesIndex, summary, isbn, author, dir string
+	var series, seriesIndex, summary, isbn, author, dir string // <- no output here
 
 	updateCmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update metadata fields in an EPUB file",
+		Short: "Update metadata fields in an EPUB file or directory",
 		Run: func(cmd *cobra.Command, args []string) {
 			if file == "" && dir == "" {
 				log.Fatal("You must specify either --file or --dir")
@@ -105,31 +105,38 @@ func NewRootCmd() *cobra.Command {
 				allFiles = []string{file}
 			}
 
+			var outputStr string
 			for _, f := range allFiles {
 				if err := metadata.Update(f, f, updates); err != nil {
 					log.Printf("Error updating %s: %v", f, err)
 					continue
 				}
-				md, _ := metadata.Read(f, false) // read updated fields (known only)
-				outputStr := parser.RenderMetadataWithHeader(filepath.Base(f), md)
-				fmt.Print(outputStr)
+				md, _ := metadata.Read(f, false)
+				outputStr += parser.RenderMetadataWithHeader(filepath.Base(f), md)
 			}
 
-			if len(allFiles) > 1 {
-				fmt.Printf("Updated %d EPUB files in directory.\n", len(allFiles))
-			} else {
-				fmt.Println("Metadata updated successfully")
+			// Always print to stdout
+			fmt.Print(outputStr)
+
+			// Write to file if specified
+			if output != "" {
+				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
+					log.Fatalf("Error writing to output file: %v", err)
+				}
+				fmt.Printf("Metadata written to %s\n", output)
 			}
 		},
 	}
 
+	// Flags
 	updateCmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
+	updateCmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files for batch update")
 	updateCmd.Flags().StringVar(&series, "series", "", "Series name")
 	updateCmd.Flags().StringVar(&seriesIndex, "series-index", "", "Series index")
 	updateCmd.Flags().StringVar(&summary, "summary", "", "Book summary")
 	updateCmd.Flags().StringVar(&isbn, "isbn", "", "ISBN identifier")
 	updateCmd.Flags().StringVar(&author, "author", "", "Author/creator name")
-	updateCmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files for batch update")
+	updateCmd.Flags().StringVarP(&output, "output", "o", "", "Optional output file to write update results")
 
 	rootCmd.AddCommand(readCmd, updateCmd)
 	return rootCmd
