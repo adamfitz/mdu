@@ -69,7 +69,7 @@ func ListEPUBFiles(dir string) ([]string, error) {
 // Returns a formatted string with a filename header
 func RenderMetadataWithHeader(filename string, md map[string]string) string {
 	var sb strings.Builder
-	sb.WriteString("File: " + filename + "\n")
+	sb.WriteString("File - " + filename + ":\n\n")
 	sb.WriteString(RenderMetadataOutput(md))
 	sb.WriteString("\n")
 	return sb.String()

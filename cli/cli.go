@@ -13,10 +13,11 @@ import (
 )
 
 func NewRootCmd() *cobra.Command {
-	var file string
-	var listFields bool
-	var all bool
-	var output string // <- declare once here
+	// --- GLOBAL variables shared by read & update ---
+	var file, dir, output string
+	var listFields, all bool
+
+	var series, seriesIndex, summary, isbn, author string
 
 	rootCmd := &cobra.Command{
 		Use:   "mdu",
@@ -26,7 +27,7 @@ func NewRootCmd() *cobra.Command {
 	// --- Read command ---
 	readCmd := &cobra.Command{
 		Use:   "read",
-		Short: "Read metadata from an EPUB file",
+		Short: "Read metadata from an EPUB file or directory",
 		Run: func(cmd *cobra.Command, args []string) {
 			if listFields {
 				fmt.Println("Supported metadata fields:")
@@ -36,35 +37,51 @@ func NewRootCmd() *cobra.Command {
 				return
 			}
 
-			if file == "" {
-				log.Fatal("You must specify --file")
+			if file == "" && dir == "" {
+				log.Fatal("You must specify either --file or --dir")
 			}
 
-			md, err := metadata.Read(file, all)
-			if err != nil {
-				log.Fatalf("Error reading metadata\n%v\n", err)
+			var allFiles []string
+			if dir != "" {
+				epubs, err := parser.ListEPUBFiles(dir)
+				if err != nil {
+					log.Fatalf("Error reading directory: %v", err)
+				}
+				allFiles = epubs
+			} else {
+				allFiles = []string{file}
 			}
 
-			rendered := parser.RenderMetadataOutput(md)
-			fmt.Printf("\n%s", rendered)
+			var outputStr string
+			for _, f := range allFiles {
+				md, err := metadata.Read(f, all)
+				if err != nil {
+					log.Printf("Error reading %s: %v", f, err)
+					continue
+				}
+				outputStr += parser.RenderMetadataWithHeader(filepath.Base(f), md)
+			}
 
+			// Always print to stdout
+			fmt.Print(outputStr)
+
+			// Write to file if specified
 			if output != "" {
-				if err := os.WriteFile(output, []byte(rendered), 0644); err != nil {
+				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
 					log.Fatalf("Error writing output file: %v", err)
 				}
-				fmt.Printf("\nMetadata written to %s\n", output)
+				fmt.Printf("Metadata written to %s\n", output)
 			}
 		},
 	}
 
 	readCmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
+	readCmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files")
 	readCmd.Flags().BoolVar(&listFields, "list-fields", false, "List all supported metadata fields")
 	readCmd.Flags().BoolVarP(&all, "all", "a", false, "Return all metadata fields, not just known ones")
 	readCmd.Flags().StringVarP(&output, "output", "o", "", "Write output to file instead of printing to console")
 
 	// --- Update command ---
-	var series, seriesIndex, summary, isbn, author, dir string // <- no output here
-
 	updateCmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update metadata fields in an EPUB file or directory",
@@ -128,7 +145,7 @@ func NewRootCmd() *cobra.Command {
 		},
 	}
 
-	// Flags
+	// Flags for update
 	updateCmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
 	updateCmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files for batch update")
 	updateCmd.Flags().StringVar(&series, "series", "", "Series name")
