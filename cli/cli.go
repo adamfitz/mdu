@@ -17,6 +17,7 @@ func NewRootCmd() *cobra.Command {
 	var listFields, all bool
 
 	var series, seriesIndex, summary, isbn, author string
+	var inputFile string // ← added for JSON input
 
 	rootCmd := &cobra.Command{
 		Use:   "mdu",
@@ -47,7 +48,7 @@ func NewRootCmd() *cobra.Command {
 			if dir != "" {
 				epubs, _ := parser.ListEpubFiles(dir)
 				pdfs, _ := parser.ListPdfFiles(dir)
-				allFiles = append(epubs, pdfs...) // need to expand the second slice to append each element in the slice
+				allFiles = append(epubs, pdfs...)
 			} else {
 				allFiles = []string{file}
 			}
@@ -99,21 +100,38 @@ func NewRootCmd() *cobra.Command {
 				log.Fatal("You must specify either --file or --dir")
 			}
 
-			updates := make(map[string]string)
-			if series != "" {
-				updates["calibre:series"] = series
-			}
-			if seriesIndex != "" {
-				updates["calibre:series_index"] = seriesIndex
-			}
-			if summary != "" {
-				updates["summary"] = summary
-			}
-			if isbn != "" {
-				updates["isbn"] = isbn
-			}
-			if author != "" {
-				updates["author"] = author
+			var updates map[string]string
+			if inputFile != "" {
+				if series != "" || seriesIndex != "" || summary != "" || isbn != "" || author != "" {
+					log.Fatal("Cannot use --input with individual metadata flags")
+				}
+
+				raw, err := parser.ReadJsonMetadata(inputFile)
+				if err != nil {
+					log.Fatalf("Error reading json input file: %v", err)
+				}
+				valid, ignored := parser.ValidateMetadataFields(raw)
+				updates = valid
+				if len(ignored) > 0 {
+					log.Printf("Ignored unsupported fields in input file: %v", ignored)
+				}
+			} else {
+				updates = make(map[string]string)
+				if series != "" {
+					updates["calibre:series"] = series
+				}
+				if seriesIndex != "" {
+					updates["calibre:series_index"] = seriesIndex
+				}
+				if summary != "" {
+					updates["summary"] = summary
+				}
+				if isbn != "" {
+					updates["isbn"] = isbn
+				}
+				if author != "" {
+					updates["author"] = author
+				}
 			}
 
 			if len(updates) == 0 {
@@ -124,7 +142,7 @@ func NewRootCmd() *cobra.Command {
 			if dir != "" {
 				epubs, _ := parser.ListEpubFiles(dir)
 				pdfs, _ := parser.ListPdfFiles(dir)
-				allFiles = append(epubs, pdfs...) // need to expand the second slice to append each element in the slice
+				allFiles = append(epubs, pdfs...)
 			} else {
 				allFiles = []string{file}
 			}
@@ -159,7 +177,7 @@ func NewRootCmd() *cobra.Command {
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing to output file: %v", err)
+					log.Fatalf("[updateCmd] Error writing to output file: %v", err)
 				}
 				fmt.Printf("Metadata written to %s\n", output)
 			}
@@ -173,6 +191,7 @@ func NewRootCmd() *cobra.Command {
 	updateCmd.Flags().StringVar(&summary, "summary", "", "Book summary")
 	updateCmd.Flags().StringVar(&isbn, "isbn", "", "ISBN identifier")
 	updateCmd.Flags().StringVar(&author, "author", "", "Author/creator name")
+	updateCmd.Flags().StringVar(&inputFile, "input", "", "JSON file containing metadata fields to update")
 	updateCmd.Flags().StringVarP(&output, "output", "o", "", "Optional output file to write update results")
 
 	rootCmd.AddCommand(readCmd, updateCmd)
