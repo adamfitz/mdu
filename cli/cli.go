@@ -47,7 +47,7 @@ func NewRootCmd() *cobra.Command {
 	readCmd.Flags().BoolVar(&listFields, "list-fields", false, "List all supported metadata fields")
 
 	// --- Update command ---
-	var series, seriesIndex, summary, isbn string
+	var series, seriesIndex, summary, isbn, author string
 
 	updateCmd := &cobra.Command{
 		Use:   "update",
@@ -70,6 +70,9 @@ func NewRootCmd() *cobra.Command {
 			if isbn != "" {
 				updates["isbn"] = isbn
 			}
+			if author != "" {
+				updates["author"] = author
+			}
 
 			if len(updates) == 0 {
 				log.Fatal("No metadata fields specified for update")
@@ -87,6 +90,7 @@ func NewRootCmd() *cobra.Command {
 	updateCmd.Flags().StringVar(&seriesIndex, "series-index", "", "Series index")
 	updateCmd.Flags().StringVar(&summary, "summary", "", "Book summary")
 	updateCmd.Flags().StringVar(&isbn, "isbn", "", "ISBN identifier")
+	updateCmd.Flags().StringVar(&author, "author", "", "Author/creator name")
 
 	rootCmd.AddCommand(readCmd, updateCmd)
 	return rootCmd

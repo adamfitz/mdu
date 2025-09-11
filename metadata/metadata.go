@@ -10,12 +10,13 @@ import (
 	"strings"
 )
 
-// SupportedFields contains the metadata fields this tool can read/update.
+// Caontains the metadata fields this tool can read/update.
 var SupportedFields = []string{
 	"calibre:series",
 	"calibre:series_index",
 	"summary",
-	"isbn", // represents dc:identifier with opf:scheme="isbn"
+	"isbn",   // represents dc:identifier with opf:scheme="isbn"
+	"author", // maps to dc:creator
 }
 
 // ---------- EPUB Structures ----------
@@ -206,7 +207,21 @@ func Update(epubPath, updatedPath string, updates map[string]string) error {
 // ---------- Internal Metadata Update Logic ----------
 
 func updateMetadata(md *Metadata, updates map[string]string) {
+	// Helper to check if a key is supported
+	isSupported := func(key string) bool {
+		for _, f := range SupportedFields {
+			if strings.EqualFold(f, key) {
+				return true
+			}
+		}
+		return false
+	}
+
 	for key, value := range updates {
+		if !isSupported(key) {
+			continue // skip unsupported keys
+		}
+
 		switch strings.ToLower(key) {
 
 		case "calibre:series", "calibre:series_index":
@@ -225,7 +240,7 @@ func updateMetadata(md *Metadata, updates map[string]string) {
 		case "summary":
 			md.Description = value
 
-		case "isbn", "dc:identifier":
+		case "isbn":
 			updated := false
 			for i := range md.Identifier {
 				if strings.EqualFold(md.Identifier[i].Scheme, "isbn") {
@@ -241,8 +256,8 @@ func updateMetadata(md *Metadata, updates map[string]string) {
 				})
 			}
 
-		default:
-			fmt.Println("Unhandled metadata key:", key)
+		case "author":
+			md.Creator = value
 		}
 	}
 }
