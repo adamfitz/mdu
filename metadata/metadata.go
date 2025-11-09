@@ -417,10 +417,8 @@ func updateOrAddElement(metadata, tagName, value string, attrs map[string]string
 	}
 
 	attrStr := ""
-	if attrs != nil {
-		for k, v := range attrs {
-			attrStr += fmt.Sprintf(` %s="%s"`, k, v)
-		}
+	for k, v := range attrs {
+		attrStr += fmt.Sprintf(` %s="%s"`, k, v)
 	}
 
 	newElement := fmt.Sprintf("    <%s%s>%s</%s>\n  ", tagName, attrStr, value, tagName)

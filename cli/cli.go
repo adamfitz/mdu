@@ -14,7 +14,7 @@ import (
 )
 
 func NewRootCmd() *cobra.Command {
-	var file, dir, output string
+	var file, dir, output, inputFile string
 	var listFields, all bool
 	var series, seriesIndex, summary, isbn, author string
 	var createBackup bool
@@ -23,7 +23,9 @@ func NewRootCmd() *cobra.Command {
 		Use:   "mdu",
 		Short: "EPUB metadata reader and updater",
 		Long: `A tool for reading and updating EPUB metadata.
-Preserves the original OPF file structure and all XML namespaces.`,
+Preserves the original OPF file structure and all XML namespaces.
+
+Supports both command-line flags and input files (JSON/YAML) for batch operations.`,
 	}
 
 	// --- Read command ---
@@ -82,13 +84,33 @@ Use --all to see all metadata fields, not just supported ones.`,
 		Use:   "update",
 		Short: "Update metadata fields in EPUB files",
 		Long: `Update metadata in EPUB files while preserving the original OPF structure.
-Creates backups by default unless --no-backup is specified.`,
+Creates backups by default unless --no-backup is specified.
+
+You can specify metadata using either:
+  1. Command-line flags (--author, --series, etc.)
+  2. An input file (--input) in JSON or YAML format
+
+Input file takes precedence over command-line flags if both are provided.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if file == "" && dir == "" {
 				log.Fatal("Error: You must specify either --file or --dir")
 			}
 
-			updates := buildUpdatesMap(series, seriesIndex, summary, isbn, author)
+			var updates map[string]string
+			var err error
+
+			// Parse input file if provided
+			if inputFile != "" {
+				updates, err = parser.ParseInputFile(inputFile)
+				if err != nil {
+					log.Fatalf("Error parsing input file: %v", err)
+				}
+				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
+			} else {
+				// Build updates from command-line flags
+				updates = buildUpdatesMap(series, seriesIndex, summary, isbn, author)
+			}
+
 			if len(updates) == 0 {
 				log.Fatal("Error: No metadata fields specified for update")
 			}
@@ -152,6 +174,7 @@ Creates backups by default unless --no-backup is specified.`,
 
 	updateCmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
 	updateCmd.Flags().StringVar(&dir, "dir", "", "Target directory for batch update")
+	updateCmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file (JSON or YAML) with metadata updates")
 	updateCmd.Flags().StringVar(&series, "series", "", "Series name")
 	updateCmd.Flags().StringVar(&seriesIndex, "series-index", "", "Series index")
 	updateCmd.Flags().StringVar(&summary, "summary", "", "Book summary")
@@ -308,7 +331,44 @@ Requires that a backup file exists (created with --backup flag during update).`,
 	checkCmd.Flags().StringVar(&dir, "dir", "", "Target directory to check")
 	checkCmd.Flags().StringVarP(&output, "output", "o", "", "Write check results to file")
 
-	rootCmd.AddCommand(readCmd, updateCmd, compareCmd, validateCmd, checkCmd)
+	// --- Generate command (create example input files) ---
+	generateCmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate example input files",
+		Long: `Generate example input files for batch metadata updates.
+Supports both JSON and YAML formats.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if output == "" {
+				log.Fatal("Error: You must specify --output filename")
+			}
+
+			ext := strings.ToLower(filepath.Ext(output))
+			var err error
+
+			switch ext {
+			case ".json":
+				err = parser.GenerateExampleJSON(output)
+			case ".yaml", ".yml":
+				err = parser.GenerateExampleYAML(output)
+			default:
+				log.Fatal("Error: Output file must have .json, .yaml, or .yml extension")
+			}
+
+			if err != nil {
+				log.Fatalf("Error generating example file: %v", err)
+			}
+
+			fmt.Printf("✓ Example input file created: %s\n", output)
+			fmt.Println("\nYou can now edit this file and use it with:")
+			fmt.Printf("  mdu update --file book.epub --input %s\n", output)
+			fmt.Printf("  mdu update --dir ./books --input %s\n", output)
+		},
+	}
+
+	generateCmd.Flags().StringVarP(&output, "output", "o", "", "Output filename (.json, .yaml, or .yml)")
+	generateCmd.MarkFlagRequired("output")
+
+	rootCmd.AddCommand(readCmd, updateCmd, compareCmd, validateCmd, checkCmd, generateCmd)
 	return rootCmd
 }
 
