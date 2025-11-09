@@ -36,10 +36,14 @@ Supports both command-line flags and input files (JSON/YAML) for batch operation
 Use --all to see all metadata fields, not just supported ones.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if listFields {
-				fmt.Println("Supported metadata fields:")
-				for _, f := range metadata.SupportedFields {
-					fmt.Printf("  %s\n", f)
-				}
+				fmt.Println("Supported metadata fields (Kavita-compatible):")
+				fmt.Println("  author           - Book author (dc:creator)")
+				fmt.Println("  summary          - Book description (dc:description + Summary)")
+				fmt.Println("  publisher        - Publisher name (dc:publisher)")
+				fmt.Println("  isbn             - ISBN identifier (dc:identifier with scheme)")
+				fmt.Println("  calibre:series   - Series name (Kavita: Name)")
+				fmt.Println("  calibre:series_index - Series position (Kavita: Volume)")
+				fmt.Println("  subject          - Genres (dc:subject)")
 				return
 			}
 

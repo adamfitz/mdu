@@ -9,15 +9,20 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/beevik/etree"
 )
 
-// Supported metadata fields
+// Supported metadata fields based on Kavita's EPUB support
 var SupportedFields = []string{
-	"calibre:series",
-	"calibre:series_index",
-	"summary",
-	"isbn",
-	"author",
+	"calibre:series",       // Kavita: Name
+	"calibre:series_index", // Kavita: Volume
+	"summary",              // Kavita-specific tag
+	"dc:description",       // EPUB standard for description
+	"dc:publisher",         // Kavita: Publisher
+	"dc:creator",           // Kavita: Writer (author)
+	"dc:subject",           // Kavita: Genres
+	"dc:identifier",        // ISBN (with opf:scheme="isbn")
 }
 
 // ---------- EPUB Structures ----------
@@ -35,49 +40,58 @@ type Container struct {
 func Read(epubPath string, all bool) (map[string]string, error) {
 	r, err := zip.OpenReader(epubPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open EPUB: %w", err)
 	}
 	defer r.Close()
 
 	opfPath, err := findOPFPath(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to locate OPF file: %w", err)
 	}
 
 	opfContent, err := readFileFromZip(r, opfPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read OPF file at '%s': %w", opfPath, err)
 	}
 
-	return parseMetadataFromOPF(opfContent, all)
+	metadata, err := parseMetadataFromOPF(opfContent, all)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse metadata: %w", err)
+	}
+
+	return metadata, nil
 }
 
 // Update modifies metadata in an EPUB file
 func Update(epubPath, outputPath string, updates map[string]string) error {
 	r, err := zip.OpenReader(epubPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open EPUB: %w", err)
 	}
 	defer r.Close()
 
 	opfPath, err := findOPFPath(r)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to locate OPF file: %w (EPUB may be invalid)", err)
 	}
 
 	opfContent, err := readFileFromZip(r, opfPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read OPF file at '%s': %w", opfPath, err)
 	}
 
 	// Modify the OPF content
 	modifiedOPF, err := updateOPFMetadata(opfContent, updates)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
 	// Create new EPUB with modified OPF
-	return writeModifiedEPUB(r, opfPath, modifiedOPF, outputPath)
+	if err := writeModifiedEPUB(r, opfPath, modifiedOPF, outputPath); err != nil {
+		return fmt.Errorf("failed to write modified EPUB: %w", err)
+	}
+
+	return nil
 }
 
 // CompareOPF compares original and modified OPF files and returns a diff report
@@ -151,7 +165,6 @@ func readFileFromZip(r *zip.ReadCloser, path string) ([]byte, error) {
 func parseMetadataFromOPF(opfContent []byte, all bool) (map[string]string, error) {
 	result := make(map[string]string)
 
-	// Parse the XML and look for metadata section
 	decoder := xml.NewDecoder(bytes.NewReader(opfContent))
 
 	var inMetadata bool
@@ -173,7 +186,6 @@ func parseMetadataFromOPF(opfContent []byte, all bool) (map[string]string, error
 			if t.Name.Local == "metadata" {
 				inMetadata = true
 			} else if inMetadata {
-				// We're inside metadata, track the element
 				currentElement = t.Name.Local
 				currentAttrs = t.Attr
 				content.Reset()
@@ -188,7 +200,6 @@ func parseMetadataFromOPF(opfContent []byte, all bool) (map[string]string, error
 			if t.Name.Local == "metadata" {
 				inMetadata = false
 			} else if inMetadata && t.Name.Local == currentElement {
-				// Process the completed element
 				text := strings.TrimSpace(content.String())
 				if text != "" {
 					extractMetadataValue(currentElement, currentAttrs, text, result)
@@ -209,7 +220,6 @@ func parseMetadataFromOPF(opfContent []byte, all bool) (map[string]string, error
 func extractMetadataValue(elementName string, attrs []xml.Attr, text string, result map[string]string) {
 	var key string
 
-	// Get attributes we care about
 	var scheme, name, property string
 	for _, attr := range attrs {
 		switch attr.Name.Local {
@@ -222,7 +232,6 @@ func extractMetadataValue(elementName string, attrs []xml.Attr, text string, res
 		}
 	}
 
-	// Map element to our field names
 	switch elementName {
 	case "title":
 		key = "title"
@@ -237,7 +246,6 @@ func extractMetadataValue(elementName string, attrs []xml.Attr, text string, res
 	case "date":
 		key = "date"
 	case "subject":
-		// Append to existing subjects
 		existing := result["subject"]
 		if existing != "" {
 			result["subject"] = existing + ", " + text
@@ -257,10 +265,8 @@ func extractMetadataValue(elementName string, attrs []xml.Attr, text string, res
 		}
 	case "meta":
 		if name != "" {
-			// Old-style meta with name attribute
 			key = name
 		} else if property != "" {
-			// New-style meta with property attribute
 			key = property
 		}
 	}
@@ -273,7 +279,6 @@ func extractMetadataValue(elementName string, attrs []xml.Attr, text string, res
 func updateOPFMetadata(opfContent []byte, updates map[string]string) ([]byte, error) {
 	doc := string(opfContent)
 
-	// Find metadata section
 	metaStart := strings.Index(doc, "<metadata")
 	if metaStart == -1 {
 		return nil, fmt.Errorf("metadata section not found")
@@ -295,7 +300,6 @@ func updateOPFMetadata(opfContent []byte, updates map[string]string) ([]byte, er
 		metadataSection = updateMetadataField(metadataSection, key, value)
 	}
 
-	// Reconstruct document
 	result := beforeMeta + metadataSection + afterMeta
 	return []byte(result), nil
 }
@@ -305,74 +309,200 @@ func updateMetadataField(metadata, key, value string) string {
 
 	switch key {
 	case "author":
-		return updateOrAddElement(metadata, "dc:creator", value, nil)
+		// Update dc:creator (EPUB standard for author/writer)
+		metadata = findAndUpdateTag(metadata, "creator", value)
+		return metadata
+
 	case "summary":
-		return updateOrAddElement(metadata, "dc:description", value, nil)
+		// Update BOTH dc:description (EPUB standard) AND Summary (Kavita-specific)
+		metadata = findAndUpdateTag(metadata, "description", value)
+		metadata = updateOrAddKavitaTag(metadata, "Summary", value)
+		return metadata
+
+	case "publisher":
+		// Update dc:publisher
+		metadata = findAndUpdateTag(metadata, "publisher", value)
+		return metadata
+
 	case "isbn":
-		// Look for existing ISBN identifier
 		return updateISBNIdentifier(metadata, value)
+
 	case "calibre:series":
 		return updateOrAddCalibreMeta(metadata, "calibre:series", value)
+
 	case "calibre:series_index":
 		return updateOrAddCalibreMeta(metadata, "calibre:series_index", value)
+
+	case "subject", "genre", "subjects":
+		// Update dc:subject (maps to Genres in Kavita)
+		metadata = findAndUpdateTag(metadata, "subject", value)
+		return metadata
 	}
 
 	return metadata
 }
 
-func updateISBNIdentifier(metadata, value string) string {
-	// Try to find existing ISBN identifier with opf:scheme or scheme attribute
-	patterns := []string{
-		`<dc:identifier[^>]*opf:scheme="ISBN"[^>]*>`,
-		`<dc:identifier[^>]*scheme="ISBN"[^>]*>`,
-		`<dc:identifier[^>]*opf:scheme="isbn"[^>]*>`,
-		`<dc:identifier[^>]*scheme="isbn"[^>]*>`,
+// findAndUpdateTag safely updates or adds an EPUB metadata tag, removes editor <creator> tags,
+// and ensures the corresponding Kavita tag is also updated.
+func findAndUpdateTag(metadata, localName, value string) string {
+	// Parse the XML
+	doc := etree.NewDocument()
+	if err := doc.ReadFromString(metadata); err != nil {
+		// if parsing fails, fallback to original metadata
+		fmt.Println("Warning: failed to parse metadata, returning original")
+		return metadata
 	}
 
-	for _, pattern := range patterns {
-		// Simple search for ISBN identifier
-		lowerMeta := strings.ToLower(metadata)
-		searchStr := strings.ToLower(pattern)
-		// Remove regex special chars for simple search
-		searchStr = strings.ReplaceAll(searchStr, `[^>]*`, "")
-		searchStr = strings.ReplaceAll(searchStr, `>`, "")
+	// Get <metadata> element
+	metaEl := doc.FindElement("//metadata")
+	if metaEl == nil {
+		// fallback
+		return metadata
+	}
 
-		idx := strings.Index(lowerMeta, `scheme="isbn"`)
-		if idx != -1 {
-			// Find the start of this identifier element
-			startIdx := strings.LastIndex(metadata[:idx], "<dc:identifier")
-			if startIdx == -1 {
-				continue
+	// Remove any editor creator tags if updating author
+	if localName == "creator" {
+		for _, el := range metaEl.FindElements(".//creator") {
+			role := el.SelectAttrValue("role", "")
+			if role == "edt" {
+				el.Parent().RemoveChild(el)
 			}
-
-			// Find the end of opening tag
-			endOfOpen := strings.Index(metadata[startIdx:], ">")
-			if endOfOpen == -1 {
-				continue
-			}
-			endOfOpen += startIdx
-
-			// Find closing tag
-			closeIdx := strings.Index(metadata[endOfOpen:], "</dc:identifier>")
-			if closeIdx == -1 {
-				continue
-			}
-			closeIdx += endOfOpen
-
-			// Replace content
-			before := metadata[:endOfOpen+1]
-			after := metadata[closeIdx:]
-			return before + value + after
 		}
 	}
 
-	// Add new ISBN identifier before </metadata>
+	// Try to find an existing element with the given localName (any prefix)
+	var existing *etree.Element
+	prefixes := []string{"dc", "opf", ""}
+	for _, prefix := range prefixes {
+		searchName := localName
+		if prefix != "" {
+			searchName = prefix + ":" + localName
+		}
+		existing = metaEl.FindElement(searchName)
+		if existing != nil {
+			break
+		}
+	}
+
+	if existing != nil {
+		// Update existing tag
+		existing.SetText(value)
+	} else {
+		// Add new tag with dc: prefix
+		tagName := "dc:" + localName
+		newEl := etree.NewElement(tagName)
+		newEl.SetText(value)
+		metaEl.AddChild(newEl)
+	}
+
+	// Update corresponding Kavita tag (plain tag without namespace)
+	metadataStr, _ := doc.WriteToString()
+	metadataStr = updateOrAddKavitaTag(metadataStr, localName, value)
+
+	return metadataStr
+}
+
+// extractTagName extracts the tag name from an opening tag like "<dc:creator id='1'>"
+func extractTagName(openingTag string) string {
+	// Remove < and >
+	tag := strings.TrimPrefix(openingTag, "<")
+	tag = strings.TrimSuffix(tag, ">")
+
+	// Get the part before any space (attributes)
+	if spaceIdx := strings.Index(tag, " "); spaceIdx != -1 {
+		tag = tag[:spaceIdx]
+	}
+
+	return tag
+}
+
+// updateOrAddKavitaTag updates or adds Kavita-specific tags (like Summary)
+func updateOrAddKavitaTag(metadata, tagName, value string) string {
+	// Kavita tags are just plain tags without namespace
+	searchPattern := "<" + tagName
+	idx := strings.Index(metadata, searchPattern)
+
+	if idx != -1 {
+		// Find end of opening tag
+		endOfOpen := strings.Index(metadata[idx:], ">")
+		if endOfOpen == -1 {
+			goto addNew
+		}
+		endOfOpen += idx
+
+		// Find closing tag
+		closeTag := "</" + tagName + ">"
+		closeIdx := strings.Index(metadata[endOfOpen:], closeTag)
+		if closeIdx == -1 {
+			goto addNew
+		}
+		closeIdx += endOfOpen
+
+		// Replace content
+		before := metadata[:endOfOpen+1]
+		after := metadata[closeIdx:]
+		return before + value + after
+	}
+
+addNew:
+	// Add new tag
 	closeMetadata := strings.Index(metadata, "</metadata>")
 	if closeMetadata == -1 {
 		return metadata
 	}
 
-	// Detect namespace prefix (dc vs opf)
+	newElement := fmt.Sprintf("    <%s>%s</%s>\n  ", tagName, value, tagName)
+	return metadata[:closeMetadata] + newElement + metadata[closeMetadata:]
+}
+
+func updateISBNIdentifier(metadata, value string) string {
+	// Look for existing ISBN identifier
+	lowerMeta := strings.ToLower(metadata)
+	idx := strings.Index(lowerMeta, `scheme="isbn"`)
+
+	if idx != -1 {
+		// Find the start of this identifier element
+		startIdx := strings.LastIndex(metadata[:idx], "<dc:identifier")
+		if startIdx == -1 {
+			startIdx = strings.LastIndex(metadata[:idx], "<identifier")
+		}
+		if startIdx == -1 {
+			goto addNew
+		}
+
+		// Find the end of opening tag
+		endOfOpen := strings.Index(metadata[startIdx:], ">")
+		if endOfOpen == -1 {
+			goto addNew
+		}
+		endOfOpen += startIdx
+
+		// Extract tag name
+		openingTag := metadata[startIdx : endOfOpen+1]
+		tagName := extractTagName(openingTag)
+
+		// Find closing tag
+		closeTag := "</" + tagName + ">"
+		closeIdx := strings.Index(metadata[endOfOpen:], closeTag)
+		if closeIdx == -1 {
+			goto addNew
+		}
+		closeIdx += endOfOpen
+
+		// Replace content
+		before := metadata[:endOfOpen+1]
+		after := metadata[closeIdx:]
+		return before + value + after
+	}
+
+addNew:
+	// Add new ISBN identifier
+	closeMetadata := strings.Index(metadata, "</metadata>")
+	if closeMetadata == -1 {
+		return metadata
+	}
+
+	// Determine namespace prefix
 	prefix := "opf"
 	if strings.Contains(metadata, `xmlns:opf=`) {
 		prefix = "opf"
@@ -383,71 +513,39 @@ func updateISBNIdentifier(metadata, value string) string {
 	return metadata[:closeMetadata] + newElement + metadata[closeMetadata:]
 }
 
-func updateOrAddElement(metadata, tagName, value string, attrs map[string]string) string {
-	// Try to find and update existing element (simple search)
-	pattern := fmt.Sprintf("<%s", tagName)
-	idx := strings.Index(metadata, pattern)
-
-	if idx != -1 {
-		// Find end of opening tag
-		endOfOpen := strings.Index(metadata[idx:], ">")
-		if endOfOpen == -1 {
-			return metadata
-		}
-		endOfOpen += idx
-
-		// Find closing tag
-		closeTag := fmt.Sprintf("</%s>", tagName)
-		closeIdx := strings.Index(metadata[endOfOpen:], closeTag)
-		if closeIdx == -1 {
-			return metadata
-		}
-		closeIdx += endOfOpen
-
-		// Replace content
-		before := metadata[:endOfOpen+1]
-		after := metadata[closeIdx:]
-		return before + value + after
-	}
-
-	// Add new element before </metadata>
-	closeMetadata := strings.Index(metadata, "</metadata>")
-	if closeMetadata == -1 {
-		return metadata
-	}
-
-	attrStr := ""
-	for k, v := range attrs {
-		attrStr += fmt.Sprintf(` %s="%s"`, k, v)
-	}
-
-	newElement := fmt.Sprintf("    <%s%s>%s</%s>\n  ", tagName, attrStr, value, tagName)
-	return metadata[:closeMetadata] + newElement + metadata[closeMetadata:]
-}
-
 func updateOrAddCalibreMeta(metadata, name, value string) string {
 	// Look for existing meta tag with this name
 	searchPattern := fmt.Sprintf(`name="%s"`, name)
-	idx := strings.Index(metadata, searchPattern)
+	lowerMeta := strings.ToLower(metadata)
+	lowerPattern := strings.ToLower(searchPattern)
+
+	idx := strings.Index(lowerMeta, lowerPattern)
 
 	if idx != -1 {
 		// Find the start of this meta tag
 		startIdx := strings.LastIndex(metadata[:idx], "<meta")
 		if startIdx == -1 {
-			return metadata
+			goto addNew
 		}
 
-		// Find end of tag (could be /> or >)
-		selfClosing := strings.Index(metadata[startIdx:], "/>")
-		normalClose := strings.Index(metadata[startIdx:], "</meta>")
+		// Find end of tag
+		endSearch := metadata[startIdx:]
+		selfClosingIdx := strings.Index(endSearch, "/>")
+		normalCloseIdx := strings.Index(endSearch, "</meta>")
 
 		var endIdx int
-		if selfClosing != -1 && (normalClose == -1 || selfClosing < normalClose) {
-			endIdx = startIdx + selfClosing + 2
-		} else if normalClose != -1 {
-			endIdx = startIdx + normalClose + 7 // length of </meta>
+		if selfClosingIdx != -1 && (normalCloseIdx == -1 || selfClosingIdx < normalCloseIdx) {
+			endIdx = startIdx + selfClosingIdx + 2
+		} else if normalCloseIdx != -1 {
+			normalCloseStart := startIdx + normalCloseIdx
+			normalCloseEnd := strings.Index(metadata[normalCloseStart:], ">")
+			if normalCloseEnd != -1 {
+				endIdx = normalCloseStart + normalCloseEnd + 1
+			} else {
+				goto addNew
+			}
 		} else {
-			return metadata
+			goto addNew
 		}
 
 		// Replace entire tag
@@ -457,7 +555,8 @@ func updateOrAddCalibreMeta(metadata, name, value string) string {
 		return before + newTag + after
 	}
 
-	// Add new meta tag before </metadata>
+addNew:
+	// Add new meta tag
 	closeMetadata := strings.Index(metadata, "</metadata>")
 	if closeMetadata == -1 {
 		return metadata
@@ -484,13 +583,11 @@ func writeModifiedEPUB(r *zip.ReadCloser, opfPath string, modifiedOPF []byte, ou
 		}
 
 		if f.Name == opfPath {
-			// Write modified OPF
 			_, err = w.Write(modifiedOPF)
 			if err != nil {
 				return err
 			}
 		} else {
-			// Copy original file
 			rc, err := f.Open()
 			if err != nil {
 				return err
@@ -530,7 +627,6 @@ func generateDiffReport(original, modified map[string]string) string {
 
 	report.WriteString("=== METADATA COMPARISON ===\n\n")
 
-	// Find all keys
 	allKeys := make(map[string]bool)
 	for k := range original {
 		allKeys[k] = true
@@ -545,7 +641,6 @@ func generateDiffReport(original, modified map[string]string) string {
 	}
 	sort.Strings(keys)
 
-	// Compare each field
 	unchanged, changed, added, removed := 0, 0, 0, 0
 
 	for _, key := range keys {
@@ -581,15 +676,22 @@ func generateDiffReport(original, modified map[string]string) string {
 
 func filterSupportedFields(m map[string]string) map[string]string {
 	filtered := make(map[string]string)
-	for _, field := range SupportedFields {
+
+	// Always include these if present
+	commonFields := []string{"title", "author", "summary", "publisher", "language", "date", "isbn"}
+	for _, field := range commonFields {
 		if val, ok := m[field]; ok {
 			filtered[field] = val
 		}
 	}
-	// Also include title if present
-	if val, ok := m["title"]; ok {
-		filtered["title"] = val
+
+	// Include calibre fields
+	for key, val := range m {
+		if strings.HasPrefix(key, "calibre:") {
+			filtered[key] = val
+		}
 	}
+
 	return filtered
 }
 

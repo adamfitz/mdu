@@ -3,6 +3,7 @@ module mdu
 go 1.24.6
 
 require (
+	github.com/beevik/etree v1.6.0
 	github.com/spf13/cobra v1.10.1
 	gopkg.in/yaml.v3 v3.0.1
 )
