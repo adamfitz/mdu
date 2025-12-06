@@ -291,3 +291,27 @@ func extractAltTitles(attrs map[string]any) []string {
 func contains(slice []string, val string) bool {
 	return slices.Contains(slice, val)
 }
+
+// FindEntryByTitle returns the entry whose English main title or alt title
+// exactly matches the provided target string.
+func FindEntryByTitle(results []mangasrc.MangadexTitleSearchResponse, title string) *mangasrc.MangadexTitleSearchResponse {
+	title = strings.ToLower(strings.TrimSpace(title))
+
+	for i := range results {
+		r := &results[i]
+
+		// Main title
+		if strings.ToLower(r.MainTitle) == title {
+			return r
+		}
+
+		// Alt titles
+		for _, alt := range r.AltTitles {
+			if strings.ToLower(alt) == title {
+				return r
+			}
+		}
+	}
+
+	return nil
+}

@@ -84,8 +84,16 @@ func retrieveMangadexIdCmd() *cobra.Command {
 				log.Fatalf("error searching for title: %s, %v", title, searchErr)
 			}
 
+			// Extract all the returned titles
+			searchResults := parser.ExtractEnglishTitles(mdTitles) // extract all the english titles from name or alt name
+
+			// search for the best match
+			nameMatch, _ := parser.BestTokenMatch(title, searchResults)
+
+			result := parser.FindEntryByTitle(mdTitles, nameMatch)
+
 			// Print results
-			parser.PrintTitleSearchResults(mdTitles)
+			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*result})
 		},
 	}
 
