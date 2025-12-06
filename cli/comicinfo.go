@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"mdu/manga_src"
+	"mdu/mangasrc"
 	"mdu/parser"
 )
 

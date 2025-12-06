@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
-	"mdu/manga_src"
+	"mdu/mangasrc"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Formats metadata as a two-column table and returns it as a string.
@@ -44,12 +47,14 @@ func RenderMetadataOutput(md map[string]string) string {
 	return sb.String()
 }
 
-// Pads a string with spaces on the right to the specified length
+// padRight pads a string to the specified width, correctly handling display width
+// (East Asian characters count as 2 width, most others as 1)
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	displayWidth := runewidth.StringWidth(s)
+	if displayWidth >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-displayWidth)
 }
 
 // Returns all .epub files in the given directory, sorted alphabetically.
@@ -89,34 +94,68 @@ func PrintTitleSearchResults(results []mangasrc.MangadexTitleSearchResponse) {
 	}
 
 	// Column widths
-	const titleWidth = 60
-	const idWidth = 36
+	const colWidth = 40
 
 	// Print header
-	fmt.Printf("%-*s | %-*s\n", titleWidth, "Title", idWidth, "Mangadex ID")
-	fmt.Printf("%s-+-%s\n", strings.Repeat("-", titleWidth), strings.Repeat("-", idWidth))
+	fmt.Printf("%s %s %s\n",
+		padRight("Name", colWidth),
+		padRight("Alt Name", colWidth),
+		padRight("Mangadex ID", colWidth))
+	fmt.Printf("%s %s %s\n",
+		strings.Repeat("-", colWidth),
+		strings.Repeat("-", colWidth),
+		strings.Repeat("-", colWidth))
 
 	for _, r := range results {
-		title := r.MainTitle
-		if title == "" && len(r.AltTitles) > 0 {
-			title = r.AltTitles[0] // fallback to first alt title
+		mainTitle := r.MainTitle
+		if mainTitle == "" {
+			mainTitle = "-"
 		}
 
-		lines := wrapText(title, titleWidth)
+		altTitle := ""
+		if len(r.AltTitles) > 0 {
+			altTitle = r.AltTitles[0]
+		} else {
+			altTitle = "-"
+		}
 
-		for i, line := range lines {
-			if i == 0 {
-				// Print first line with ID
-				fmt.Printf("%-*s | %-*s\n", titleWidth, line, idWidth, r.ID)
-			} else {
-				// Subsequent lines: only print the wrapped title
-				fmt.Printf("%-*s | %-*s\n", titleWidth, line, idWidth, "")
+		// Wrap both title columns
+		mainLines := wrapText(mainTitle, colWidth)
+		altLines := wrapText(altTitle, colWidth)
+
+		// Determine max lines needed
+		maxLines := len(mainLines)
+		if len(altLines) > maxLines {
+			maxLines = len(altLines)
+		}
+
+		// Print each line
+		for i := 0; i < maxLines; i++ {
+			mainLine := ""
+			if i < len(mainLines) {
+				mainLine = mainLines[i]
 			}
+
+			altLine := ""
+			if i < len(altLines) {
+				altLine = altLines[i]
+			}
+
+			idLine := ""
+			if i == 0 {
+				idLine = r.ID
+			}
+
+			fmt.Printf("%s %s %s\n",
+				padRight(mainLine, colWidth),
+				padRight(altLine, colWidth),
+				padRight(idLine, colWidth))
 		}
 	}
 }
 
-// wrapText splits a string into lines of max width n, respecting word boundaries.
+// wrapText splits a string into lines of max display width, respecting word boundaries.
+// Uses display width to handle East Asian characters correctly (they display as 2 chars wide).
 func wrapText(text string, width int) []string {
 	var lines []string
 	words := strings.Fields(text)
@@ -125,12 +164,17 @@ func wrapText(text string, width int) []string {
 	}
 
 	current := words[0]
+	currentWidth := runewidth.StringWidth(current)
+
 	for _, word := range words[1:] {
-		if len(current)+1+len(word) > width {
+		wordWidth := runewidth.StringWidth(word)
+		if currentWidth+1+wordWidth > width {
 			lines = append(lines, current)
 			current = word
+			currentWidth = wordWidth
 		} else {
 			current += " " + word
+			currentWidth += 1 + wordWidth
 		}
 	}
 	lines = append(lines, current)
@@ -245,10 +289,5 @@ func extractAltTitles(attrs map[string]any) []string {
 // ------------------ Utility ------------------
 
 func contains(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, val)
 }
