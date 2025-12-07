@@ -20,7 +20,7 @@ Preserves original file structure and formatting.`,
 	// Add format-specific subcommands
 	rootCmd.AddCommand(NewEPUBCmd())
 	// rootCmd.AddCommand(NewPDFCmd())      // Future
-	rootCmd.AddCommand(NewMangaInfoCmd()) // Future
+	rootCmd.AddCommand(NewComicInfoCmd())
 
 	// Add general commands
 	rootCmd.AddCommand(NewGenerateCmd())

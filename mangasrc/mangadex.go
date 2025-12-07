@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	//"log"
+	"log"
 	"net/http"
 	"net/url"
 )
@@ -35,35 +35,36 @@ type MangadexTitleSearchResponse struct {
 
 // Function to search for a manga by name (title) and return the full metadata
 func TitleMetadata(mangadexId string) (*MangadexTitleMetadata, error) {
-	// Build URL using the ID, not the title
-	mangaURL := fmt.Sprintf("%s/manga/%s", mangadexApiBaseUri, mangadexId)
+	if mangadexId == "" {
+		return nil, fmt.Errorf("manga ID is empty")
+	}
 
-	res, err := http.Get(mangaURL)
+	url := fmt.Sprintf("%s/manga/%s", mangadexApiBaseUri, mangadexId)
+
+	res, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("error making HTTP request: %w", err)
+		return nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %w", err)
+		return nil, fmt.Errorf("error reading body: %w", err)
 	}
 
-	// The response for /manga/{id} is a single object, NOT an array
-	// so we use MangadexTitleMetadata directly, not MangadexSearchResponse
-	var result struct {
+	var wrapper struct {
 		Data MangadexTitleMetadata `json:"data"`
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshalling JSON: %w", err)
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w\nbody: %s", err, string(body))
 	}
 
-	return &result.Data, nil
+	return &wrapper.Data, nil
 }
 
 // Search manga titles from mangadex, should be passed to another func to determine the best match
-// (remove the punctuation and build string amtch etc)
+// (remove the punctuation and build string match etc)
 func MangadexTitleSearch(name string) ([]MangadexTitleSearchResponse, error) {
 	baseURL := mangadexApiBaseUri + "/manga"
 	params := url.Values{}
@@ -71,23 +72,46 @@ func MangadexTitleSearch(name string) ([]MangadexTitleSearchResponse, error) {
 
 	mangaURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 
+	// DEBUG: log final request URL
+	log.Printf("[Mangadex] Request URL: %s", mangaURL)
+
 	res, err := http.Get(mangaURL)
 	if err != nil {
+		log.Printf("[Mangadex] HTTP request failed: %v", err)
 		return nil, fmt.Errorf("error requesting manga info: %w", err)
 	}
 	defer res.Body.Close()
 
+	// DEBUG: log HTTP status
+	log.Printf("[Mangadex] Status: %d %s", res.StatusCode, res.Status)
+
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
+		log.Printf("[Mangadex] Error reading body: %v", err)
 		return nil, fmt.Errorf("error reading response: %w", err)
+	}
+
+	// DEBUG: log raw body if status is not 200
+	if res.StatusCode != http.StatusOK {
+		log.Printf("[Mangadex] NON-200 response body:\n%s", string(body))
+		return nil, fmt.Errorf("bad status %d from mangadex", res.StatusCode)
+	}
+
+	// DEBUG: detect HTML (Cloudflare or error page)
+	if len(body) > 0 && body[0] == '<' {
+		log.Printf("[Mangadex] WARNING: Body starts with '<' (HTML returned instead of JSON)\n%s", string(body))
+		return nil, fmt.Errorf("mangadex returned HTML, not JSON")
 	}
 
 	var response MangadexSearchResponse
 	if err := json.Unmarshal(body, &response); err != nil {
+		log.Printf("[Mangadex] JSON decode error: %v", err)
+		log.Printf("[Mangadex] RAW BODY for debugging:\n%s", string(body))
 		return nil, fmt.Errorf("error decoding JSON: %w", err)
 	}
 
 	if len(response.Results) == 0 {
+		log.Printf("[Mangadex] Empty results for title: %s", name)
 		return nil, fmt.Errorf("no manga found for title: %s", name)
 	}
 
@@ -133,4 +157,27 @@ func MangadexTitleSearch(name string) ([]MangadexTitleSearchResponse, error) {
 	}
 
 	return results, nil
+}
+
+// converts mangadex response to the conicinfo sype struct
+func MangadexToComicInfo(md *MangadexTitleMetadata) map[string]string {
+	updates := make(map[string]string)
+
+	// Extract title
+	if title, ok := md.Attributes["title"].(map[string]any); ok {
+		if enTitle, ok := title["en"].(string); ok {
+			updates["Series"] = enTitle
+		}
+	}
+
+	// Extract description
+	if desc, ok := md.Attributes["description"].(map[string]any); ok {
+		if enDesc, ok := desc["en"].(string); ok {
+			updates["Summary"] = enDesc
+		}
+	}
+
+	// Extract tags/genres, etc.
+
+	return updates
 }
