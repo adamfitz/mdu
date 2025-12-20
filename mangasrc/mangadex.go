@@ -12,8 +12,6 @@ import (
 
 var mangadexApiBaseUri string = "https://api.mangadex.org"
 
-//var mangadexBaseUri string = "https://mangadex.org"
-
 // Generic MangaDex response
 type MangadexSearchResponse struct {
 	Results []MangadexTitleMetadata `json:"data"`
@@ -157,27 +155,4 @@ func MangadexTitleSearch(name string) ([]MangadexTitleSearchResponse, error) {
 	}
 
 	return results, nil
-}
-
-// converts mangadex response to the conicinfo sype struct
-func MangadexToComicInfo(md *MangadexTitleMetadata) map[string]string {
-	updates := make(map[string]string)
-
-	// Extract title
-	if title, ok := md.Attributes["title"].(map[string]any); ok {
-		if enTitle, ok := title["en"].(string); ok {
-			updates["Series"] = enTitle
-		}
-	}
-
-	// Extract description
-	if desc, ok := md.Attributes["description"].(map[string]any); ok {
-		if enDesc, ok := desc["en"].(string); ok {
-			updates["Summary"] = enDesc
-		}
-	}
-
-	// Extract tags/genres, etc.
-
-	return updates
 }

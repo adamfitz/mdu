@@ -1,17 +1,25 @@
 package cli
 
 import (
+	"archive/zip"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"mdu/mangasrc"
 	"mdu/metadata"
 	"mdu/parser"
+)
+
+const (
+	maxIntegrityRetries = 3
 )
 
 func NewComicInfoCmd() *cobra.Command {
@@ -28,7 +36,7 @@ func NewComicInfoCmd() *cobra.Command {
 		newComicInfoValidateCmd(),
 		newComicInfoCheckCmd(),
 		newComicInfoGenerateCmd(),
-		newComicInfoMangadexIdSearchCmd(),
+		newComicInfoSearchCmd(),
 	)
 
 	return comicInfoCmd
@@ -117,20 +125,18 @@ All ComicInfo.xml fields are displayed by default.`,
 func newComicInfoUpdateCmd() *cobra.Command {
 	var file, dir, output, inputFile string
 	var series, number, volume, summary, writer, publisher string
-	var createBackup bool
 
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update metadata in CBZ files",
 		Long: `Update ComicInfo.xml metadata in CBZ files while preserving existing data.
-Creates backups by default unless --no-backup is specified.
 
 You can specify metadata using either:
   1. Command-line flags (--series, --number, --writer, etc.)
   2. An input file (--input) in JSON or YAML format`,
 		Example: `  mdu comicinfo update --file comic.cbz --writer "John Doe" --series "Amazing Comics"
   mdu comicinfo update --dir ./comics --input metadata.json
-  mdu comicinfo update --file comic.cbz --number "12" --volume "2" --no-backup`,
+  mdu comicinfo update --file comic.cbz --number "12" --volume "2"`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if file == "" && dir == "" {
 				log.Fatal("Error: You must specify either --file or --dir")
@@ -168,15 +174,6 @@ You can specify metadata using either:
 			successCount := 0
 
 			for _, f := range allFiles {
-				if createBackup {
-					backupPath := f + ".backup"
-					if err := copyFile(f, backupPath); err != nil {
-						log.Printf("Warning: Could not create backup for %s: %v", f, err)
-					} else {
-						fmt.Printf("✓ Backup created: %s\n", backupPath)
-					}
-				}
-
 				if err := metadata.UpdateComicInfo(f, f, updates); err != nil {
 					log.Printf("✗ Error updating %s: %v", filepath.Base(f), err)
 					continue
@@ -217,7 +214,6 @@ You can specify metadata using either:
 	cmd.Flags().StringVar(&writer, "writer", "", "Writer name")
 	cmd.Flags().StringVar(&publisher, "publisher", "", "Publisher name")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write results to file")
-	cmd.Flags().BoolVar(&createBackup, "backup", true, "Create .backup files")
 
 	return cmd
 }
@@ -230,7 +226,7 @@ func newComicInfoCompareCmd() *cobra.Command {
 		Short: "Compare metadata between two CBZ files",
 		Long: `Compare ComicInfo.xml metadata from two CBZ files and generate a diff report.
 Useful for validating changes after updates.`,
-		Example: `  mdu comicinfo compare comic.cbz comic.cbz.backup
+		Example: `  mdu comicinfo compare comic.cbz comic_modified.cbz
   mdu comicinfo compare original.cbz modified.cbz --output diff.txt`,
 		Args: cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -270,9 +266,8 @@ func newComicInfoValidateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "validate",
-		Short: "Validate changes by comparing with backup",
-		Long: `Compare a CBZ file with its .backup file to validate changes.
-Requires that a backup file exists (created with --backup flag during update).`,
+		Short: "Validate CBZ file structure and ComicInfo.xml",
+		Long:  `Validates that a CBZ file has proper structure and valid ComicInfo.xml.`,
 		Example: `  mdu comicinfo validate --file comic.cbz
   mdu comicinfo validate --file comic.cbz --output validation.txt`,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -280,22 +275,28 @@ Requires that a backup file exists (created with --backup flag during update).`,
 				log.Fatal("Error: You must specify --file")
 			}
 
-			backupFile := file + ".backup"
-			if !fileExists(backupFile) {
-				log.Fatalf("Error: Backup file not found: %s", backupFile)
+			if !fileExists(file) {
+				log.Fatalf("Error: File not found: %s", file)
 			}
 
-			diff, err := metadata.CompareComicInfo(backupFile, file)
+			// Validate integrity
+			if err := validateCBZIntegrity(file); err != nil {
+				log.Fatalf("✗ Validation failed: %v", err)
+			}
+
+			fmt.Printf("✓ File structure is valid: %s\n", filepath.Base(file))
+
+			// Read and display metadata
+			md, err := metadata.ReadComicInfo(file)
 			if err != nil {
-				log.Fatalf("Error comparing files: %v", err)
+				log.Fatalf("✗ Error reading ComicInfo.xml: %v", err)
 			}
 
-			fmt.Printf("Comparing: %s (original) vs %s (current)\n\n",
-				filepath.Base(backupFile), filepath.Base(file))
-			fmt.Println(diff)
+			result := fmt.Sprintf("\n✓ ComicInfo.xml is valid\n\n%s", parser.RenderComicInfo(md, filepath.Base(file)))
+			fmt.Print(result)
 
 			if output != "" {
-				if err := os.WriteFile(output, []byte(diff), 0644); err != nil {
+				if err := os.WriteFile(output, []byte(result), 0644); err != nil {
 					log.Fatalf("Error writing output file: %v", err)
 				}
 				fmt.Printf("\n✓ Validation report written to %s\n", output)
@@ -344,7 +345,7 @@ func newComicInfoCheckCmd() *cobra.Command {
 
 				if err != nil {
 					if strings.Contains(err.Error(), "ComicInfo.xml not found") {
-						results.WriteString("⚠ CBZ structure valid but ComicInfo.xml not found\n")
+						results.WriteString("⚠  CBZ structure valid but ComicInfo.xml not found\n")
 						missingCount++
 					} else {
 						results.WriteString(fmt.Sprintf("✗ INVALID: %v\n", err))
@@ -355,7 +356,7 @@ func newComicInfoCheckCmd() *cobra.Command {
 
 				results.WriteString("✓ CBZ structure valid\n")
 				results.WriteString("✓ ComicInfo.xml found and readable\n")
-				results.WriteString(parser.RenderComicInfo(md))
+				results.WriteString(parser.RenderComicInfo(md, ""))
 
 				validCount++
 			}
@@ -384,198 +385,121 @@ func newComicInfoCheckCmd() *cobra.Command {
 }
 
 func newComicInfoGenerateCmd() *cobra.Command {
-	var file, dir, output, inputFile string
-	var series, number, volume, summary, writer, publisher string
+	var file, dir, output string
 	var mangadexID string
-	var parseFilename bool
 
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Generate ComicInfo.xml in CBZ files",
-		Long: `Generate and add ComicInfo.xml to CBZ files that don't have one.
-Creates backups by default.
+		Short: "Generate ComicInfo.xml in CBZ files from MangaDex metadata",
+		Long: `Generate and add ComicInfo.xml to CBZ files using MangaDex API metadata.
 
-You can specify metadata using:
-  1. Command-line flags (--series, --number, --writer, etc.)
-  2. An input file (--input) in JSON or YAML format
-  3. MangaDex API (--mangadex-id) to fetch metadata
-  4. Filename parsing (enabled by default) to extract chapter numbers
-
-Filename parsing is ENABLED by default and will attempt to extract chapter numbers 
-from filenames like: ch0001.cbz, chapter 1.cbz, chapter-01.cbz, ch1.cbz, etc.
-Use --parse-filename=false to disable this behavior.
-
-When multiple sources are used, they are applied in order:
-  1. Manual flags/input file (base metadata)
-  2. MangaDex API (overwrites with fetched data)
-  3. Filename parsing (sets/overwrites Number field only)`,
-		Example: `  mdu comicinfo generate --file comic.cbz --series "Amazing Comics" --number "1"
-  mdu comicinfo generate --dir ./comics --input metadata.json
-  mdu comicinfo generate --file comic.cbz --mangadex-id "abc123-def456"
-  mdu comicinfo generate --dir ./manga --mangadex-id "abc123"
-  mdu comicinfo generate --file ch0001.cbz --series "One Piece"
-  mdu comicinfo generate --file chapter-05.cbz --series "Naruto" --parse-filename=false`,
+This command:
+  1. Fetches manga metadata from MangaDex using the provided manga ID
+  2. Fetches author/artist names from MangaDex
+  3. Extracts chapter numbers from CBZ filenames
+  4. Creates ComicInfo.xml for each chapter
+  5. Repackages CBZ files with the new ComicInfo.xml
+  6. Validates integrity using checksum verification
+  7. Replaces original files only after successful validation`,
+		Example: `  mdu comicinfo generate --mangadex-id "abc123-def456" --file ch001.cbz
+  mdu comicinfo generate --mangadex-id "abc123-def456" --dir ./chapters`,
 		Run: func(cmd *cobra.Command, args []string) {
+			if mangadexID == "" {
+				log.Fatal("Error: --mangadex-id is required")
+			}
 			if file == "" && dir == "" {
 				log.Fatal("Error: You must specify either --file or --dir")
 			}
-
-			// Start with base metadata from flags or input file
-			var baseUpdates map[string]string
-			var err error
-
-			if inputFile != "" {
-				baseUpdates, err = parser.ParseInputFile(inputFile)
-				if err != nil {
-					log.Fatalf("Error parsing input file: %v", err)
-				}
-				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
-			} else {
-				baseUpdates = buildComicInfoUpdatesMap(series, number, volume, summary, writer, publisher)
+			if file != "" && dir != "" {
+				log.Fatal("Error: You cannot specify both --file and --dir")
 			}
 
-			// Fetch MangaDex metadata if ID provided
-			var mangadexMetadata *mangasrc.MangadexTitleMetadata
-			if mangadexID != "" {
-				fmt.Printf("🔍 Fetching metadata from MangaDex (ID: %s)...\n", mangadexID)
-				mangadexMetadata, err = mangasrc.TitleMetadata(mangadexID)
-				if err != nil {
-					log.Fatalf("Error fetching MangaDex metadata: %v", err)
-				}
-				fmt.Printf("✓ Successfully fetched MangaDex metadata\n")
-
-				// Display what was fetched
-				if mangadexMetadata != nil && len(mangadexMetadata.Attributes) > 0 {
-					fmt.Println("  Fetched fields:")
-					if title, ok := mangadexMetadata.Attributes["title"].(map[string]any); ok {
-						if enTitle, ok := title["en"].(string); ok {
-							fmt.Printf("    Series: %s\n", enTitle)
-						}
-					}
-					if desc, ok := mangadexMetadata.Attributes["description"].(map[string]any); ok {
-						if enDesc, ok := desc["en"].(string); ok {
-							displayVal := enDesc
-							if len(displayVal) > 60 {
-								displayVal = displayVal[:57] + "..."
-							}
-							fmt.Printf("    Summary: %s\n", displayVal)
-						}
-					}
-				}
-			}
-
-			allFiles, err := getCBZFiles(file, dir)
+			// Step 1: Fetch MangaDex metadata
+			fmt.Printf("🔍 Fetching metadata from MangaDex (ID: %s)...\n", mangadexID)
+			mangadexMetadata, err := mangasrc.TitleMetadata(mangadexID)
 			if err != nil {
-				log.Fatalf("Error getting CBZ files: %v", err)
+				log.Fatalf("Error fetching MangaDex metadata: %v", err)
+			}
+			fmt.Println("✓ Metadata fetched successfully")
+
+			// Step 2: Convert to ComicInfo struct and fetch author names
+			baseComicInfo, err := parser.MangaDexToComicInfo(mangadexMetadata)
+			if err != nil {
+				log.Fatalf("Error converting MangaDex metadata to ComicInfo: %v", err)
 			}
 
-			fmt.Printf("\nGenerating ComicInfo.xml for %d file(s)\n", len(allFiles))
-			if len(baseUpdates) > 0 {
-				fmt.Println("Base metadata:")
-				for k, v := range baseUpdates {
-					fmt.Printf("  %s: %s\n", k, v)
-				}
+			// Fetch actual author/artist names
+			if err := enrichComicInfoWithAuthors(baseComicInfo, mangadexMetadata); err != nil {
+				log.Printf("⚠️  Warning: Could not fetch all author names: %v", err)
 			}
-			if !parseFilename {
-				fmt.Println("⚠️  Filename parsing disabled - chapter numbers will not be extracted")
-			} else {
-				fmt.Println("✓ Filename parsing enabled - will extract chapter numbers")
-			}
-			fmt.Println()
 
-			var outputStr string
+			fmt.Println("✓ Metadata converted to ComicInfo format")
+
+			// Step 3: Get all CBZ files to process
+			allFiles, err := resolveCBZFiles(file, dir)
+			if err != nil {
+				log.Fatalf("Error resolving CBZ files: %v", err)
+			}
+
+			if len(allFiles) == 0 {
+				log.Fatal("Error: No CBZ files found to process")
+			}
+
+			fmt.Printf("\n📚 Processing %d file(s)...\n\n", len(allFiles))
+
+			// Step 4: Process each file
 			successCount := 0
+			skippedCount := 0
+			failedCount := 0
+			var outputStr string
 
-			for _, f := range allFiles {
-				// Build the updates map for this file
-				updates := make(map[string]string)
+			for i, cbzPath := range allFiles {
+				fileName := filepath.Base(cbzPath)
+				fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(allFiles), fileName)
 
-				// 1. Start with base metadata (flags or input file)
-				for k, v := range baseUpdates {
-					updates[k] = v
+				// Extract chapter number from filename
+				chapterNum := parser.ExtractChapterNumber(fileName)
+				if chapterNum == "" {
+					log.Printf("⚠️  Could not extract chapter number from '%s', skipping\n\n", fileName)
+					skippedCount++
+					continue
 				}
+				fmt.Printf("  📄 Extracted chapter number: %s\n", chapterNum)
 
-				// 2. Apply MangaDex metadata (overwrites base)
-				if mangadexMetadata != nil {
-					// Extract Series from title
-					if title, ok := mangadexMetadata.Attributes["title"].(map[string]any); ok {
-						if enTitle, ok := title["en"].(string); ok {
-							updates["Series"] = enTitle
-						}
-					}
+				// Create a copy of the base ComicInfo and update with chapter number
+				chapterComicInfo := *baseComicInfo
+				chapterComicInfo.Number = chapterNum
+				chapterComicInfo.Title = fmt.Sprintf("Chapter %s", chapterNum)
 
-					// Extract Summary from description
-					if desc, ok := mangadexMetadata.Attributes["description"].(map[string]any); ok {
-						if enDesc, ok := desc["en"].(string); ok {
-							updates["Summary"] = enDesc
-						}
-					}
-
-					// Extract tags/genres
-					if tags, ok := mangadexMetadata.Attributes["tags"].([]any); ok {
-						var genres []string
-						for _, tag := range tags {
-							if tagMap, ok := tag.(map[string]any); ok {
-								if attrs, ok := tagMap["attributes"].(map[string]any); ok {
-									if name, ok := attrs["name"].(map[string]any); ok {
-										if enName, ok := name["en"].(string); ok {
-											genres = append(genres, enName)
-										}
-									}
-								}
-							}
-						}
-						if len(genres) > 0 {
-							updates["Genre"] = strings.Join(genres, ", ")
-						}
-					}
-				}
-
-				// 3. Parse filename for chapter number if enabled (overwrites Number field)
-				if parseFilename {
-					chapterNum := parser.ExtractChapterNumber(filepath.Base(f))
-					if chapterNum != "" {
-						updates["Number"] = chapterNum
-						fmt.Printf("📄 Extracted chapter number '%s' from filename: %s\n",
-							chapterNum, filepath.Base(f))
-					} else {
-						log.Printf("⚠️  Filename parsing failed: no chapter number pattern found in '%s'",
-							filepath.Base(f))
-					}
-				}
-
-				if len(updates) == 0 {
-					log.Printf("⚠️  No metadata to generate for %s, skipping", filepath.Base(f))
+				// Process this chapter with integrity validation
+				if err := processChapterWithIntegrity(cbzPath, &chapterComicInfo); err != nil {
+					log.Printf("✗ Error processing %s: %v\n\n", fileName, err)
+					failedCount++
 					continue
 				}
 
-				// Create backup
-				backupPath := f + ".backup"
-				if err := copyFile(f, backupPath); err != nil {
-					log.Printf("Warning: Could not create backup for %s: %v", f, err)
-				} else {
-					fmt.Printf("✓ Backup created: %s\n", backupPath)
-				}
-
-				if err := metadata.GenerateComicInfo(f, f, updates); err != nil {
-					log.Printf("✗ Error generating ComicInfo.xml for %s: %v", filepath.Base(f), err)
-					continue
-				}
-
-				md, err := metadata.ReadComicInfo(f)
+				// Read back the metadata for output
+				md, err := metadata.ReadComicInfo(cbzPath)
 				if err != nil {
-					log.Printf("Warning: Generated ComicInfo.xml for %s but couldn't read metadata: %v",
-						filepath.Base(f), err)
+					log.Printf("⚠️  Processed %s but couldn't read metadata: %v\n", fileName, err)
 				} else {
-					outputStr += parser.RenderComicInfo(md, filepath.Base(f))
+					outputStr += parser.RenderComicInfo(md, fileName)
 				}
 
-				fmt.Printf("✓ Generated: %s\n", filepath.Base(f))
+				fmt.Printf("✓ Successfully processed: %s\n\n", fileName)
 				successCount++
 			}
 
-			fmt.Printf("\n✓ Successfully generated ComicInfo.xml for %d of %d file(s)\n\n",
-				successCount, len(allFiles))
+			// Final summary
+			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+			fmt.Printf("✓ Successfully processed: %d\n", successCount)
+			if skippedCount > 0 {
+				fmt.Printf("⚠️  Skipped (no chapter number): %d\n", skippedCount)
+			}
+			if failedCount > 0 {
+				fmt.Printf("✗ Failed: %d\n", failedCount)
+			}
+			fmt.Printf("Total files: %d\n\n", len(allFiles))
 			fmt.Print(outputStr)
 
 			if output != "" {
@@ -587,60 +511,415 @@ When multiple sources are used, they are applied in order:
 		},
 	}
 
-	cmd.Flags().StringVar(&file, "file", "", "Target CBZ file")
-	cmd.Flags().StringVar(&dir, "dir", "", "Target directory for batch generation")
-	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file (JSON or YAML) with metadata")
-	cmd.Flags().StringVar(&series, "series", "", "Series name")
-	cmd.Flags().StringVar(&number, "number", "", "Issue/chapter number")
-	cmd.Flags().StringVar(&volume, "volume", "", "Volume number")
-	cmd.Flags().StringVar(&summary, "summary", "", "Issue summary")
-	cmd.Flags().StringVar(&writer, "writer", "", "Writer name")
-	cmd.Flags().StringVar(&publisher, "publisher", "", "Publisher name")
-	cmd.Flags().StringVar(&mangadexID, "mangadex-id", "", "MangaDex manga ID to fetch metadata")
-	cmd.Flags().BoolVar(&parseFilename, "parse-filename", true, "Parse chapter number from filename (enabled by default)")
+	cmd.Flags().StringVar(&file, "file", "", "Target CBZ file (absolute or relative path)")
+	cmd.Flags().StringVar(&dir, "dir", "", "Target directory containing CBZ files")
+	cmd.Flags().StringVar(&mangadexID, "mangadex-id", "", "MangaDex manga ID to fetch metadata (required)")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write results to file")
 
 	return cmd
 }
 
-func newComicInfoMangadexIdSearchCmd() *cobra.Command {
+func newComicInfoSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "search",
-		Short: "search Mangadex for specific title by name and return id",
-		Long: `Title search (multipe words) and token match scoring to find the best match by name (english only).
-		Returns the Mangadex Id as a string.  The manga name can contain spaces, however puncuation that causes the 
-		shell to evaluate as an expression will not work `,
-		Example: `  mdu comicinfo search The name of the manga I am searching for`,
-		Args:    cobra.MinimumNArgs(1),
+		Use:   "search <title>",
+		Short: "Search MangaDex for a manga title and return the best match",
+		Long: `Search MangaDex by title (multiple words) and use token match scoring to find the best match.
+Returns the MangaDex ID and title information.
+
+The search uses English titles only and performs fuzzy matching to find the closest result.`,
+		Example: `  mdu comicinfo search One Piece
+  mdu comicinfo search "Attack on Titan"
+  mdu comicinfo search Berserk`,
+		Args: cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			// Join all positional args into a single title
 			title := strings.Join(args, " ")
 
-			fmt.Printf("\nResults for Title: %s\n\n", title)
+			fmt.Printf("\n🔍 Searching MangaDex for: %s\n\n", title)
 
-			// Search Mangadex
-			mdTitles, searchErr := mangasrc.MangadexTitleSearch(title)
-			if searchErr != nil {
-				log.Fatalf("error searching for title: %s, %v", title, searchErr)
+			// Search MangaDex
+			mdTitles, err := mangasrc.MangadexTitleSearch(title)
+			if err != nil {
+				log.Fatalf("Error searching for title '%s': %v", title, err)
+			}
+
+			if len(mdTitles) == 0 {
+				fmt.Printf("No results found for: %s\n", title)
+				return
 			}
 
 			// Extract all the returned titles
-			searchResults := parser.ExtractEnglishTitles(mdTitles) // extract all the english titles from name or alt name
+			searchResults := parser.ExtractEnglishTitles(mdTitles)
 
-			// search for the best match
-			nameMatch, _ := parser.BestTokenMatch(title, searchResults)
+			// Search for the best match
+			nameMatch, score := parser.BestTokenMatch(title, searchResults)
 
 			result := parser.FindEntryByTitle(mdTitles, nameMatch)
+			if result == nil {
+				log.Fatalf("Error: Could not find matching entry")
+			}
 
 			// Print results
+			fmt.Printf("Best Match (Score: %.2f):\n", score)
+			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*result})
+			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", result.ID)
 		},
 	}
 
 	return cmd
 }
 
-// CBZ-specific helper
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// enrichComicInfoWithAuthors fetches actual author and artist names from MangaDex
+// and updates the ComicInfo struct with real names instead of placeholder IDs
+func enrichComicInfoWithAuthors(comic *parser.ComicInfo, md *mangasrc.MangadexTitleMetadata) error {
+	var authors []string
+	var artists []string
+
+	for _, rel := range md.Relationships {
+		relMap, ok := rel.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		relType, ok := relMap["type"].(string)
+		if !ok {
+			continue
+		}
+
+		relID, ok := relMap["id"].(string)
+		if !ok {
+			continue
+		}
+
+		// Fetch author/artist name
+		name, err := parser.MangaAuthorName(relID)
+		if err != nil {
+			log.Printf("⚠️  Warning: Could not fetch name for %s %s: %v", relType, relID, err)
+			continue
+		}
+
+		switch relType {
+		case "author":
+			authors = append(authors, name)
+		case "artist":
+			artists = append(artists, name)
+		}
+	}
+
+	// Update ComicInfo with fetched names
+	if len(authors) > 0 {
+		comic.Writer = strings.Join(authors, ", ")
+	}
+	if len(artists) > 0 {
+		comic.Penciller = strings.Join(artists, ", ")
+	}
+
+	return nil
+}
+
+// resolveCBZFiles resolves file or directory to a list of CBZ files
+func resolveCBZFiles(file, dir string) ([]string, error) {
+	if file != "" {
+		absPath, err := resolveFilePath(file)
+		if err != nil {
+			return nil, fmt.Errorf("error resolving file path: %w", err)
+		}
+		if !strings.HasSuffix(strings.ToLower(absPath), ".cbz") {
+			return nil, fmt.Errorf("file must be a .cbz file")
+		}
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("file does not exist: %s", absPath)
+		}
+		return []string{absPath}, nil
+	}
+
+	// Handle directory
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("error resolving directory path: %w", err)
+	}
+	return getCBZFiles("", absDir)
+}
+
+// resolveFilePath resolves a file path to absolute path
+func resolveFilePath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+
+	if strings.Contains(path, string(filepath.Separator)) {
+		return filepath.Abs(path)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current directory: %w", err)
+	}
+	return filepath.Join(cwd, path), nil
+}
+
+// processChapterWithIntegrity processes a CBZ file with integrity validation and retry logic
+func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) error {
+	fileName := filepath.Base(cbzPath)
+	chapterName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+
+	// Create temp directory for this operation
+	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("mdu_%s_%d", chapterName, time.Now().Unix()))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	fmt.Printf("  📁 Created temp directory: %s\n", tempDir)
+
+	// Extract original CBZ contents
+	fmt.Printf("  📦 Extracting CBZ contents...\n")
+	if err := extractCBZ(cbzPath, tempDir); err != nil {
+		return fmt.Errorf("failed to extract CBZ: %w", err)
+	}
+
+	// Write ComicInfo.xml to temp directory
+	comicInfoPath := filepath.Join(tempDir, "ComicInfo.xml")
+	fmt.Printf("  📝 Writing ComicInfo.xml...\n")
+	if _, err := parser.WriteComicInfo(comicInfo, comicInfoPath); err != nil {
+		return fmt.Errorf("failed to write ComicInfo.xml: %w", err)
+	}
+
+	// Attempt to create and validate new CBZ with retries
+	var lastErr error
+	for attempt := 1; attempt <= maxIntegrityRetries; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("  🔄 Retry attempt %d/%d...\n", attempt, maxIntegrityRetries)
+		}
+
+		// Create new CBZ
+		newCBZPath := cbzPath + ".new"
+		fmt.Printf("  🗜️  Creating new CBZ file...\n")
+		if err := createCBZ(tempDir, newCBZPath); err != nil {
+			lastErr = fmt.Errorf("failed to create CBZ: %w", err)
+			os.Remove(newCBZPath)
+			continue
+		}
+
+		// Validate integrity with checksum
+		fmt.Printf("  🔐 Validating CBZ integrity...\n")
+		if err := validateCBZIntegrity(newCBZPath); err != nil {
+			lastErr = fmt.Errorf("integrity validation failed: %w", err)
+			os.Remove(newCBZPath)
+			continue
+		}
+
+		// Additional checksum verification
+		if err := verifyCBZChecksum(newCBZPath, tempDir); err != nil {
+			lastErr = fmt.Errorf("checksum verification failed: %w", err)
+			os.Remove(newCBZPath)
+			continue
+		}
+
+		fmt.Printf("  ✓ Integrity check passed\n")
+
+		// Replace original file with new file
+		fmt.Printf("  🔄 Replacing original file...\n")
+		if err := os.Remove(cbzPath); err != nil {
+			os.Remove(newCBZPath)
+			return fmt.Errorf("failed to remove original file: %w", err)
+		}
+		if err := os.Rename(newCBZPath, cbzPath); err != nil {
+			return fmt.Errorf("failed to rename new file: %w", err)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed after %d attempts: %v", maxIntegrityRetries, lastErr)
+}
+
+// extractCBZ extracts a CBZ (zip) file to a directory
+func extractCBZ(cbzPath, destDir string) error {
+	r, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		return fmt.Errorf("failed to open CBZ: %w", err)
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		// Skip ComicInfo.xml if it already exists (we'll write a new one)
+		if f.Name == "ComicInfo.xml" {
+			continue
+		}
+
+		fpath := filepath.Join(destDir, f.Name)
+
+		// Check for ZipSlip vulnerability
+		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return fmt.Errorf("failed to create file: %w", err)
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to open zip entry: %w", err)
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return fmt.Errorf("failed to copy file content: %w", err)
+		}
+	}
+	return nil
+}
+
+// createCBZ creates a CBZ (zip) file from a directory
+func createCBZ(sourceDir, cbzPath string) error {
+	file, err := os.Create(cbzPath)
+	if err != nil {
+		return fmt.Errorf("failed to create CBZ file: %w", err)
+	}
+	defer file.Close()
+
+	w := zip.NewWriter(file)
+	defer w.Close()
+
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Use forward slashes in zip file
+		relPath = filepath.ToSlash(relPath)
+
+		zipFile, err := w.Create(relPath)
+		if err != nil {
+			return err
+		}
+
+		fsFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer fsFile.Close()
+
+		_, err = io.Copy(zipFile, fsFile)
+		return err
+	})
+}
+
+// validateCBZIntegrity validates that a CBZ file can be opened and all files are readable
+func validateCBZIntegrity(cbzPath string) error {
+	r, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		return fmt.Errorf("cannot open CBZ: %w", err)
+	}
+	defer r.Close()
+
+	// Check that we can read all files
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("cannot open file %s in CBZ: %w", f.Name, err)
+		}
+
+		// Try to read the entire file to verify it's not corrupted
+		if _, err := io.Copy(io.Discard, rc); err != nil {
+			rc.Close()
+			return fmt.Errorf("cannot read file %s in CBZ: %w", f.Name, err)
+		}
+		rc.Close()
+	}
+
+	// Verify ComicInfo.xml exists
+	hasComicInfo := false
+	for _, f := range r.File {
+		if f.Name == "ComicInfo.xml" {
+			hasComicInfo = true
+			break
+		}
+	}
+	if !hasComicInfo {
+		return fmt.Errorf("ComicInfo.xml not found in CBZ")
+	}
+
+	return nil
+}
+
+// verifyCBZChecksum performs additional checksum verification on the CBZ contents
+func verifyCBZChecksum(cbzPath, sourceDir string) error {
+	r, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		return fmt.Errorf("cannot open CBZ for checksum: %w", err)
+	}
+	defer r.Close()
+
+	// Verify each file's checksum against the source
+	for _, f := range r.File {
+		// Read file from CBZ
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("cannot open %s in CBZ: %w", f.Name, err)
+		}
+
+		cbzHash := sha256.New()
+		if _, err := io.Copy(cbzHash, rc); err != nil {
+			rc.Close()
+			return fmt.Errorf("cannot hash %s in CBZ: %w", f.Name, err)
+		}
+		rc.Close()
+		cbzSum := cbzHash.Sum(nil)
+
+		// Read original file from source directory
+		sourcePath := filepath.Join(sourceDir, f.Name)
+		sourceFile, err := os.Open(sourcePath)
+		if err != nil {
+			return fmt.Errorf("cannot open source file %s: %w", sourcePath, err)
+		}
+
+		sourceHash := sha256.New()
+		if _, err := io.Copy(sourceHash, sourceFile); err != nil {
+			sourceFile.Close()
+			return fmt.Errorf("cannot hash source file %s: %w", sourcePath, err)
+		}
+		sourceFile.Close()
+		sourceSum := sourceHash.Sum(nil)
+
+		// Compare checksums
+		if string(cbzSum) != string(sourceSum) {
+			return fmt.Errorf("checksum mismatch for %s", f.Name)
+		}
+	}
+
+	return nil
+}
+
+// getCBZFiles returns a list of CBZ files from file or directory
 func getCBZFiles(file, dir string) ([]string, error) {
 	if dir != "" {
 		return parser.ListCBZFiles(dir)
@@ -648,7 +927,7 @@ func getCBZFiles(file, dir string) ([]string, error) {
 	return []string{file}, nil
 }
 
-// Helper function to build updates map for ComicInfo fields
+// buildComicInfoUpdatesMap creates a map of ComicInfo field updates
 func buildComicInfoUpdatesMap(series, number, volume, summary, writer, publisher string) map[string]string {
 	updates := make(map[string]string)
 
