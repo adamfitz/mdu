@@ -669,6 +669,11 @@ func enrichComicInfoWithAuthors(comic *parser.ComicInfo, md *mangasrc.MangadexTi
 			continue
 		}
 
+		// Only process author and artist types, skip cover_art, creator, etc.
+		if relType != "author" && relType != "artist" {
+			continue
+		}
+
 		relID, ok := relMap["id"].(string)
 		if !ok {
 			continue
@@ -677,7 +682,8 @@ func enrichComicInfoWithAuthors(comic *parser.ComicInfo, md *mangasrc.MangadexTi
 		// Fetch author/artist name
 		name, err := parser.MangaAuthorName(relID)
 		if err != nil {
-			log.Printf("⚠️  Warning: Could not fetch name for %s %s: %v", relType, relID, err)
+			// Log the error but continue processing
+			log.Printf("⚠️  Warning: Could not fetch %s name (ID: %s): %v", relType, relID, err)
 			continue
 		}
 
@@ -697,6 +703,8 @@ func enrichComicInfoWithAuthors(comic *parser.ComicInfo, md *mangasrc.MangadexTi
 		comic.Penciller = strings.Join(artists, ", ")
 	}
 
+	// If we couldn't fetch any authors/artists, that's okay - just leave fields empty
+	// This is not considered an error condition
 	return nil
 }
 
@@ -721,7 +729,24 @@ func resolveCBZFiles(file, dir string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error resolving directory path: %w", err)
 	}
-	return getCBZFiles("", absDir)
+
+	files, err := getCBZFiles("", absDir)
+	if err != nil {
+		return nil, fmt.Errorf("error getting CBZ files: %w", err)
+	}
+
+	// Ensure all paths are absolute
+	absFiles := make([]string, len(files))
+	for i, f := range files {
+		if filepath.IsAbs(f) {
+			absFiles[i] = f
+		} else {
+			// If relative, make it relative to the directory we're scanning
+			absFiles[i] = filepath.Join(absDir, f)
+		}
+	}
+
+	return absFiles, nil
 }
 
 // resolveFilePath resolves a file path to absolute path
@@ -746,6 +771,12 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) er
 	fileName := filepath.Base(cbzPath)
 	chapterName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 
+	// Ensure we have absolute path
+	absCBZPath, err := filepath.Abs(cbzPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
 	// Create temp directory for this operation
 	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("mdu_%s_%d", chapterName, time.Now().Unix()))
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
@@ -756,7 +787,7 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) er
 
 	// Extract original CBZ contents
 	fmt.Printf("  📦 Extracting CBZ contents...\n")
-	if err := extractCBZ(cbzPath, tempDir); err != nil {
+	if err := extractCBZ(absCBZPath, tempDir); err != nil {
 		return fmt.Errorf("failed to extract CBZ: %w", err)
 	}
 
@@ -775,7 +806,7 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) er
 		}
 
 		// Create new CBZ
-		newCBZPath := cbzPath + ".new"
+		newCBZPath := absCBZPath + ".new"
 		fmt.Printf("  🗜️  Creating new CBZ file...\n")
 		if err := createCBZ(tempDir, newCBZPath); err != nil {
 			lastErr = fmt.Errorf("failed to create CBZ: %w", err)
@@ -802,11 +833,11 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) er
 
 		// Replace original file with new file
 		fmt.Printf("  🔄 Replacing original file...\n")
-		if err := os.Remove(cbzPath); err != nil {
+		if err := os.Remove(absCBZPath); err != nil {
 			os.Remove(newCBZPath)
 			return fmt.Errorf("failed to remove original file: %w", err)
 		}
-		if err := os.Rename(newCBZPath, cbzPath); err != nil {
+		if err := os.Rename(newCBZPath, absCBZPath); err != nil {
 			return fmt.Errorf("failed to rename new file: %w", err)
 		}
 
