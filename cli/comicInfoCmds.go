@@ -55,7 +55,7 @@ All ComicInfo.xml fields are displayed by default.`,
   mdu comicinfo read --file comic.cbz
   mdu comicinfo read --dir ./comics
   mdu comicinfo read --file comic.cbz --output metadata.txt`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if listFields {
 				fmt.Println("Supported ComicInfo.xml metadata fields (Kavita-compatible):")
 				fmt.Println("  Series           - Series name")
@@ -82,7 +82,7 @@ All ComicInfo.xml fields are displayed by default.`,
 				fmt.Println("  Year             - Publication year")
 				fmt.Println("  Month            - Publication month")
 				fmt.Println("  Day              - Publication day")
-				return
+				return nil
 			}
 
 			// Support positional argument as file path
@@ -91,12 +91,12 @@ All ComicInfo.xml fields are displayed by default.`,
 			}
 
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either a file, use --file flag, or use --dir flag")
+				return fmt.Errorf("you must specify either a file, use --file flag, or use --dir flag")
 			}
 
 			allFiles, err := getCBZFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting CBZ files: %v", err)
+				return fmt.Errorf("failed to get CBZ files: %w", err)
 			}
 
 			var outputStr string
@@ -120,10 +120,12 @@ All ComicInfo.xml fields are displayed by default.`,
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("\n✓ Metadata written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -140,19 +142,33 @@ func newComicInfoUpdateCmd() *cobra.Command {
 	var series, number, volume, summary, writer, publisher string
 
 	cmd := &cobra.Command{
-		Use:   "update",
+		Use:   "update [file|dir]",
 		Short: "Update metadata in CBZ files",
 		Long: `Update ComicInfo.xml metadata in CBZ files while preserving existing data.
 
 You can specify metadata using either:
   1. Command-line flags (--series, --number, --writer, etc.)
   2. An input file (--input) in JSON or YAML format`,
-		Example: `  mdu comicinfo update --file comic.cbz --writer "John Doe" --series "Amazing Comics"
-  mdu comicinfo update --dir ./comics --input metadata.json
-  mdu comicinfo update --file comic.cbz --number "12" --volume "2"`,
-		Run: func(cmd *cobra.Command, args []string) {
+		Example: `  mdu comicinfo update comic.cbz --writer "John Doe" --series "Amazing Comics"
+  mdu comicinfo update --file comic.cbz --writer "John Doe"
+  mdu comicinfo update --dir ./comics --input metadata.json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Support positional argument
+			if len(args) > 0 && file == "" && dir == "" {
+				path := args[0]
+				info, err := os.Stat(path)
+				if err != nil {
+					return fmt.Errorf("cannot access path '%s': %w", path, err)
+				}
+				if info.IsDir() {
+					dir = path
+				} else {
+					file = path
+				}
+			}
+
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				return fmt.Errorf("you must specify either --file or --dir")
 			}
 
 			var updates map[string]string
@@ -161,7 +177,7 @@ You can specify metadata using either:
 			if inputFile != "" {
 				updates, err = parser.ParseInputFile(inputFile)
 				if err != nil {
-					log.Fatalf("Error parsing input file: %v", err)
+					return fmt.Errorf("failed to parse input file: %w", err)
 				}
 				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
 			} else {
@@ -169,12 +185,12 @@ You can specify metadata using either:
 			}
 
 			if len(updates) == 0 {
-				log.Fatal("Error: No metadata fields specified for update")
+				return fmt.Errorf("no metadata fields specified for update")
 			}
 
 			allFiles, err := getCBZFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting CBZ files: %v", err)
+				return fmt.Errorf("failed to get CBZ files: %w", err)
 			}
 
 			fmt.Printf("Updating %d file(s) with the following changes:\n", len(allFiles))
@@ -210,10 +226,12 @@ You can specify metadata using either:
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("✓ Results written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -242,30 +260,32 @@ Useful for validating changes after updates.`,
 		Example: `  mdu comicinfo compare comic.cbz comic_modified.cbz
   mdu comicinfo compare original.cbz modified.cbz --output diff.txt`,
 		Args: cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			original := args[0]
 			modified := args[1]
 
 			if !fileExists(original) {
-				log.Fatalf("Error: Original file not found: %s", original)
+				return fmt.Errorf("original file not found: %s", original)
 			}
 			if !fileExists(modified) {
-				log.Fatalf("Error: Modified file not found: %s", modified)
+				return fmt.Errorf("modified file not found: %s", modified)
 			}
 
 			diff, err := metadata.CompareComicInfo(original, modified)
 			if err != nil {
-				log.Fatalf("Error comparing files: %v", err)
+				return fmt.Errorf("failed to compare files: %w", err)
 			}
 
 			fmt.Println(diff)
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(diff), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("\n✓ Comparison report written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -278,23 +298,29 @@ func newComicInfoValidateCmd() *cobra.Command {
 	var file, output string
 
 	cmd := &cobra.Command{
-		Use:   "validate",
+		Use:   "validate [file]",
 		Short: "Validate CBZ file structure and ComicInfo.xml",
 		Long:  `Validates that a CBZ file has proper structure and valid ComicInfo.xml.`,
-		Example: `  mdu comicinfo validate --file comic.cbz
+		Example: `  mdu comicinfo validate comic.cbz
+  mdu comicinfo validate --file comic.cbz
   mdu comicinfo validate --file comic.cbz --output validation.txt`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Support positional argument
+			if len(args) > 0 && file == "" {
+				file = args[0]
+			}
+
 			if file == "" {
-				log.Fatal("Error: You must specify --file")
+				return fmt.Errorf("you must specify --file or provide a file path")
 			}
 
 			if !fileExists(file) {
-				log.Fatalf("Error: File not found: %s", file)
+				return fmt.Errorf("file not found: %s", file)
 			}
 
 			// Validate integrity
 			if err := validateCBZIntegrity(file); err != nil {
-				log.Fatalf("✗ Validation failed: %v", err)
+				return fmt.Errorf("validation failed: %w", err)
 			}
 
 			fmt.Printf("✓ File structure is valid: %s\n", filepath.Base(file))
@@ -302,7 +328,7 @@ func newComicInfoValidateCmd() *cobra.Command {
 			// Read and display metadata
 			md, err := metadata.ReadComicInfo(file)
 			if err != nil {
-				log.Fatalf("✗ Error reading ComicInfo.xml: %v", err)
+				return fmt.Errorf("failed to read ComicInfo.xml: %w", err)
 			}
 
 			result := fmt.Sprintf("\n✓ ComicInfo.xml is valid\n\n%s", parser.RenderComicInfo(md, filepath.Base(file)))
@@ -310,10 +336,12 @@ func newComicInfoValidateCmd() *cobra.Command {
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(result), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("\n✓ Validation report written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -337,13 +365,13 @@ func newComicInfoCheckCmd() *cobra.Command {
 		Example: `  mdu comicinfo check comic.cbz
   mdu comicinfo check --file comic.cbz
   mdu comicinfo check --dir ./comics --output report.txt`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			// Support positional argument as file or directory path
 			if len(args) > 0 && file == "" && dir == "" {
 				path := args[0]
 				info, err := os.Stat(path)
 				if err != nil {
-					log.Fatalf("Error: Cannot access path: %v", err)
+					return fmt.Errorf("cannot access path: %w", err)
 				}
 				if info.IsDir() {
 					dir = path
@@ -353,12 +381,12 @@ func newComicInfoCheckCmd() *cobra.Command {
 			}
 
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either a file/directory, use --file flag, or use --dir flag")
+				return fmt.Errorf("you must specify either a file/directory, use --file flag, or use --dir flag")
 			}
 
 			allFiles, err := getCBZFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting CBZ files: %v", err)
+				return fmt.Errorf("failed to get CBZ files: %w", err)
 			}
 
 			var results strings.Builder
@@ -398,10 +426,12 @@ func newComicInfoCheckCmd() *cobra.Command {
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(results.String()), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("\n✓ Check results written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -577,7 +607,7 @@ The search uses English titles only and performs fuzzy matching to find the clos
   mdu comicinfo search "Attack on Titan"
   mdu comicinfo search Berserk`,
 		Args: cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			// Join all positional args into a single title
 			title := strings.Join(args, " ")
 
@@ -586,12 +616,12 @@ The search uses English titles only and performs fuzzy matching to find the clos
 			// Search MangaDex
 			mdTitles, err := mangasrc.MangadexTitleSearch(title)
 			if err != nil {
-				log.Fatalf("Error searching for title '%s': %v", title, err)
+				return fmt.Errorf("failed to search for title '%s': %w", title, err)
 			}
 
 			if len(mdTitles) == 0 {
 				fmt.Printf("No results found for: %s\n", title)
-				return
+				return nil
 			}
 
 			// Extract all the returned titles
@@ -602,7 +632,7 @@ The search uses English titles only and performs fuzzy matching to find the clos
 
 			result := parser.FindEntryByTitle(mdTitles, nameMatch)
 			if result == nil {
-				log.Fatalf("Error: Could not find matching entry")
+				return fmt.Errorf("could not find matching entry")
 			}
 
 			// Print results
@@ -610,6 +640,8 @@ The search uses English titles only and performs fuzzy matching to find the clos
 			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*result})
 			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", result.ID)
+
+			return nil
 		},
 	}
 
