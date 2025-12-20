@@ -47,11 +47,12 @@ func newComicInfoReadCmd() *cobra.Command {
 	var listFields bool
 
 	cmd := &cobra.Command{
-		Use:   "read",
+		Use:   "read [file]",
 		Short: "Read metadata from CBZ files",
 		Long: `Read and display ComicInfo.xml metadata from CBZ files.
 All ComicInfo.xml fields are displayed by default.`,
-		Example: `  mdu comicinfo read --file comic.cbz
+		Example: `  mdu comicinfo read comic.cbz
+  mdu comicinfo read --file comic.cbz
   mdu comicinfo read --dir ./comics
   mdu comicinfo read --file comic.cbz --output metadata.txt`,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -84,8 +85,13 @@ All ComicInfo.xml fields are displayed by default.`,
 				return
 			}
 
+			// Support positional argument as file path
+			if len(args) > 0 && file == "" && dir == "" {
+				file = args[0]
+			}
+
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				log.Fatal("Error: You must specify either a file, use --file flag, or use --dir flag")
 			}
 
 			allFiles, err := getCBZFiles(file, dir)
@@ -97,13 +103,20 @@ All ComicInfo.xml fields are displayed by default.`,
 			for _, f := range allFiles {
 				md, err := metadata.ReadComicInfo(f)
 				if err != nil {
-					log.Printf("Error reading %s: %v", f, err)
+					if strings.Contains(err.Error(), "ComicInfo.xml not found") {
+						fmt.Printf("File: %s\n", filepath.Base(f))
+						fmt.Printf("⚠️  No ComicInfo.xml found in this CBZ file\n\n")
+					} else {
+						log.Printf("Error reading %s: %v\n\n", f, err)
+					}
 					continue
 				}
 				outputStr += parser.RenderComicInfo(md, filepath.Base(f))
 			}
 
-			fmt.Print(outputStr)
+			if outputStr != "" {
+				fmt.Print(outputStr)
+			}
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
@@ -314,18 +327,33 @@ func newComicInfoCheckCmd() *cobra.Command {
 	var file, dir, output string
 
 	cmd := &cobra.Command{
-		Use:   "check",
+		Use:   "check [file|dir]",
 		Short: "Check CBZ file validity and structure",
 		Long: `Validates that CBZ files have proper structure:
 - File is a valid ZIP archive
 - ComicInfo.xml exists (if present)
 - ComicInfo.xml has valid XML structure
 - Reports whether ComicInfo.xml is present or missing`,
-		Example: `  mdu comicinfo check --file comic.cbz
+		Example: `  mdu comicinfo check comic.cbz
+  mdu comicinfo check --file comic.cbz
   mdu comicinfo check --dir ./comics --output report.txt`,
 		Run: func(cmd *cobra.Command, args []string) {
+			// Support positional argument as file or directory path
+			if len(args) > 0 && file == "" && dir == "" {
+				path := args[0]
+				info, err := os.Stat(path)
+				if err != nil {
+					log.Fatalf("Error: Cannot access path: %v", err)
+				}
+				if info.IsDir() {
+					dir = path
+				} else {
+					file = path
+				}
+			}
+
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				log.Fatal("Error: You must specify either a file/directory, use --file flag, or use --dir flag")
 			}
 
 			allFiles, err := getCBZFiles(file, dir)
@@ -389,7 +417,7 @@ func newComicInfoGenerateCmd() *cobra.Command {
 	var mangadexID string
 
 	cmd := &cobra.Command{
-		Use:   "generate",
+		Use:   "generate [file|dir]",
 		Short: "Generate ComicInfo.xml in CBZ files from MangaDex metadata",
 		Long: `Generate and add ComicInfo.xml to CBZ files using MangaDex API metadata.
 
@@ -401,31 +429,47 @@ This command:
   5. Repackages CBZ files with the new ComicInfo.xml
   6. Validates integrity using checksum verification
   7. Replaces original files only after successful validation`,
-		Example: `  mdu comicinfo generate --mangadex-id "abc123-def456" --file ch001.cbz
+		Example: `  mdu comicinfo generate --mangadex-id "abc123-def456" ch001.cbz
+  mdu comicinfo generate --mangadex-id "abc123-def456" --file ch001.cbz
   mdu comicinfo generate --mangadex-id "abc123-def456" --dir ./chapters`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if mangadexID == "" {
-				log.Fatal("Error: --mangadex-id is required")
+				return fmt.Errorf("--mangadex-id is required\n\nUsage: mdu comicinfo generate --mangadex-id <id> <file|directory>\n   or: mdu comicinfo generate --mangadex-id <id> --file <file>\n   or: mdu comicinfo generate --mangadex-id <id> --dir <directory>\n\nTip: Use 'mdu comicinfo search <title>' to find the correct MangaDex ID")
 			}
+
+			// Support positional argument as file or directory path
+			if len(args) > 0 && file == "" && dir == "" {
+				path := args[0]
+				info, err := os.Stat(path)
+				if err != nil {
+					return fmt.Errorf("cannot access path '%s': %w", path, err)
+				}
+				if info.IsDir() {
+					dir = path
+				} else {
+					file = path
+				}
+			}
+
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				return fmt.Errorf("you must specify a target file or directory\n\nUsage: mdu comicinfo generate --mangadex-id <id> <file|directory>\n   or: mdu comicinfo generate --mangadex-id <id> --file <file>\n   or: mdu comicinfo generate --mangadex-id <id> --dir <directory>")
 			}
 			if file != "" && dir != "" {
-				log.Fatal("Error: You cannot specify both --file and --dir")
+				return fmt.Errorf("you cannot specify both --file and --dir")
 			}
 
 			// Step 1: Fetch MangaDex metadata
 			fmt.Printf("🔍 Fetching metadata from MangaDex (ID: %s)...\n", mangadexID)
 			mangadexMetadata, err := mangasrc.TitleMetadata(mangadexID)
 			if err != nil {
-				log.Fatalf("Error fetching MangaDex metadata: %v", err)
+				return fmt.Errorf("failed to fetch MangaDex metadata: %w\n\nTip: Use 'mdu comicinfo search <title>' to find the correct MangaDex ID", err)
 			}
 			fmt.Println("✓ Metadata fetched successfully")
 
 			// Step 2: Convert to ComicInfo struct and fetch author names
 			baseComicInfo, err := parser.MangaDexToComicInfo(mangadexMetadata)
 			if err != nil {
-				log.Fatalf("Error converting MangaDex metadata to ComicInfo: %v", err)
+				return fmt.Errorf("failed to convert MangaDex metadata to ComicInfo: %w", err)
 			}
 
 			// Fetch actual author/artist names
@@ -438,11 +482,11 @@ This command:
 			// Step 3: Get all CBZ files to process
 			allFiles, err := resolveCBZFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error resolving CBZ files: %v", err)
+				return fmt.Errorf("failed to resolve CBZ files: %w", err)
 			}
 
 			if len(allFiles) == 0 {
-				log.Fatal("Error: No CBZ files found to process")
+				return fmt.Errorf("no CBZ files found to process")
 			}
 
 			fmt.Printf("\n📚 Processing %d file(s)...\n\n", len(allFiles))
@@ -504,10 +548,12 @@ This command:
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("✓ Results written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
