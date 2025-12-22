@@ -1,0 +1,17 @@
+Name: mdu
+Version: @VERSION@
+Release: 1%{?dist}
+Summary: metadata updater utility
+
+License: MIT
+BuildArch: x86_64
+
+%description
+CLI utility to read, validate, add or update metadata to epub and cbz files (pdf soon).
+
+%install
+mkdir -p %{buildroot}/usr/bin
+install -m 755 mdu %{buildroot}/usr/bin/mdu
+
+%files
+/usr/bin/mdu

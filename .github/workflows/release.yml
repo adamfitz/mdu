@@ -1,0 +1,123 @@
+name: Build & Release mdu
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # REQUIRED for gh-release to publish
+
+    env:
+      APP_NAME: mdu
+      GOOS: linux
+      GOARCH: amd64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --------------------
+      # Version from git tag
+      # --------------------
+      - name: Get latest git tag
+        id: tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0)
+          CLEAN_VERSION=${TAG#v}
+          echo "latest=$TAG" >> "$GITHUB_OUTPUT"
+          echo "clean=$CLEAN_VERSION" >> "$GITHUB_OUTPUT"
+
+      # --------------------
+      # Dependencies
+      # --------------------
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            golang-go \
+            dpkg-dev \
+            rpm
+
+      # --------------------
+      # Build binary
+      # --------------------
+      - name: Build mdu
+        run: |
+          GOOS=${GOOS} GOARCH=${GOARCH} \
+          go build \
+            -ldflags "-X main.Version=${{ steps.tag.outputs.latest }}" \
+            -o mdu \
+            ./main.go
+
+      - name: Create output directories
+        run: |
+          mkdir -p builds
+          mkdir -p rootfs/DEBIAN
+          mkdir -p rootfs/usr/bin
+
+      # ====================
+      # Debian package
+      # ====================
+      - name: Prepare Debian control file
+        run: |
+          sed "s/@VERSION@/${{ steps.tag.outputs.clean }}/" \
+            packaging/deb/DEBIAN/control.in \
+            > rootfs/DEBIAN/control
+
+
+      - name: Install Debian files
+        run: |
+          install -m 755 mdu rootfs/usr/bin/mdu
+
+      - name: Build .deb
+        run: |
+          dpkg-deb --build rootfs \
+            builds/mdu_${{ steps.tag.outputs.latest }}_amd64.deb
+
+      # ====================
+      # RPM package
+      # ====================
+      - name: Prepare RPM build tree
+        run: |
+          mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+      - name: Prepare RPM spec
+        run: |
+          sed "s/@VERSION@/${{ steps.tag.outputs.clean }}/" \
+            packaging/rpm/mdu.spec.in \
+            > rpmbuild/SPECS/mdu.spec
+
+      - name: Prepare RPM sources
+        run: |
+          cp mdu rpmbuild/SOURCES/
+
+      - name: Build RPM
+        run: |
+          rpmbuild \
+            --define "_topdir $(pwd)/rpmbuild" \
+            -bb rpmbuild/SPECS/mdu.spec
+
+      - name: Collect RPM
+        run: |
+          find rpmbuild/RPMS -name "*.rpm" -exec cp {} builds/ \;
+
+      # ====================
+      # GitHub Release
+      # ====================
+      - name: Create GitHub Release (gh-release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.latest }}
+          name: ${{ steps.tag.outputs.latest }}
+          draft: false
+          prerelease: false
+          omit_source: true
+          files: |
+            builds/*.deb
+            builds/*.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
