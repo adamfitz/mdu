@@ -1,0 +1,8 @@
+Package: mdu
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Adam adam@networknoob.net
+Description: metadata updater utility
+ CLI utility to read, validate, add or update metadata to epub and cbz files (pdf soon).
