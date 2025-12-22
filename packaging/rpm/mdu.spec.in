@@ -11,7 +11,7 @@ CLI utility to read, validate, add or update metadata to epub and cbz files (pdf
 
 %install
 mkdir -p %{buildroot}/usr/bin
-install -m 755 mdu %{buildroot}/usr/bin/mdu
+install -m 755 %{_sourcedir}/mdu %{buildroot}/usr/bin/mdu
 
 %files
 /usr/bin/mdu
