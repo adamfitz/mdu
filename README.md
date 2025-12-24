@@ -1,20 +1,78 @@
 # mdu - Metadata Updater
 
-A command-line tool for reading and updating EPUB metadata while preserving the original OPF file structure and all XML namespaces.
+A command-line tool for managing metadata in EPUB and CBZ files with integrated MangaDex support.
 
-Perfect for organizing your ebook library with media management tools like [Kavita](https://www.kavitareader.com/).
+Perfect for organizing your ebook and manga library with media management tools like [Kavita](https://www.kavitareader.com/), [Komga](https://komga.org/), and other comic/manga readers.
 
 ## Features
 
-- 📖 **Read metadata** from single files or entire directories
-- ✏️ **Update metadata** with command-line flags or input files (JSON/YAML)
-- 🔍 **Validate changes** by comparing original and modified files
-- 🛡️ **Preserves structure** - keeps all existing metadata and XML namespaces intact
-- 📦 **Batch operations** - process multiple files at once
-- 💾 **Automatic backups** - creates `.backup` files by default
-- ✅ **EPUB validation** - checks file structure and required metadata
+### EPUB Support
+* 📖 **Read metadata** from single files or entire directories
+* ✏️ **Update metadata** with command-line flags or input files (JSON/YAML)
+* 🔍 **Validate changes** by comparing original and modified files
+* 🛡️ **Preserves structure** - keeps all existing metadata and XML namespaces intact
+* 📦 **Batch operations** - process multiple files at once
+* 💾 **Automatic backups** - creates `.backup` files by default
+* ✅ **EPUB validation** - checks file structure and required metadata
+
+### CBZ/ComicInfo.xml Support
+* 📚 **MangaDex Integration** - Fetch manga metadata directly from MangaDex API
+* 🔍 **Smart Search** - Find manga titles with fuzzy matching
+* 🏷️ **ComicInfo.xml** - Create, update, and validate ComicInfo.xml metadata files
+* 🔄 **Update Existing Files** - Add or update ComicInfo.xml in existing CBZ archives
+* ✓ **Metadata Validation** - Verify ComicInfo.xml structure and content
+* 🎯 **Smart Chapter Extraction** - Automatic chapter number detection from filenames
+* 🛡️ **Integrity Validation** - Internal SHA256 verification during repackaging (with automatic retry)
 
 ## Installation
+
+### Download Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from the [releases page](https://github.com/adamfitz/mdu/releases):
+
+#### Linux (.deb package)
+```bash
+# Download the .deb file
+wget https://github.com/adamfitz/mdu/releases/latest/download/mdu_amd64.deb
+
+# Install
+sudo dpkg -i mdu_amd64.deb
+
+# Run from anywhere
+mdu --version
+```
+
+#### Linux (.rpm package)
+```bash
+# Download the .rpm file
+wget https://github.com/adamfitz/mdu/releases/latest/download/mdu_x86_64.rpm
+
+# Install on Fedora/RHEL/CentOS
+sudo dnf install mdu_x86_64.rpm
+
+# Or on older systems
+sudo rpm -i mdu_x86_64.rpm
+
+# Run from anywhere
+mdu --version
+```
+
+#### Linux (Binary)
+```bash
+# Download the binary
+wget https://github.com/adamfitz/mdu/releases/latest/download/mdu-linux-amd64 -O mdu
+
+# Make executable
+chmod +x mdu
+
+# Move to PATH (optional)
+sudo mv mdu /usr/local/bin/
+
+# Run
+mdu --version
+```
+
+### Build from Source
 
 ```bash
 # Clone the repository
@@ -22,570 +80,873 @@ git clone https://github.com/adamfitz/mdu.git
 cd mdu
 
 # Install dependencies
-go get gopkg.in/yaml.v3
+go mod download
 
 # Build
 go build -o mdu
 
-# Or run directly
-go run . [command]
+# Or install to GOPATH
+go install
 ```
 
 ## Quick Start
 
+### EPUB Files
 ```bash
 # Read metadata from an EPUB file
-mdu read --file book.epub
+mdu epub read --file book.epub
 
-# Update metadata with command-line flags
-mdu update --file book.epub --author "Author Name" --series "Series Name" --series-index "1"
+# Update metadata
+mdu epub update --file book.epub --author "Author Name" --series "Series Name" --series-index "1"
+```
 
-# Generate a metadata template
-mdu generate -o metadata.yaml
+### CBZ Files
+```bash
+# Search for a manga on MangaDex
+mdu comicinfo search "One Piece"
 
-# Update using an input file
-mdu update --file book.epub --input metadata.yaml
+# Generate ComicInfo.xml from MangaDex for your CBZ files
+mdu comicinfo generate --mangadex-id "a1c7c817-4e59-43b7-9365-09675a149a6f" --dir ./manga
 
-# Validate changes
-mdu validate --file book.epub
+# Update existing CBZ with metadata
+mdu comicinfo update --file manga.cbz --series "One Piece" --number "1"
 
-# Check EPUB validity
-mdu check --dir ./books
+# Verify ComicInfo.xml in a CBZ file
+mdu comicinfo validate manga.cbz
 ```
 
 ## Commands
 
-### `read` - Read Metadata
+### EPUB Commands
 
-Read and display metadata from EPUB files.
+#### `epub read` - Read EPUB Metadata
 
 ```bash
 # Read single file
-mdu read --file book.epub
+mdu epub read --file book.epub
 
-# Read all metadata fields (not just supported ones)
-mdu read --file book.epub --all
+# Read all metadata fields
+mdu epub read --file book.epub --all
 
 # Read all EPUBs in a directory
-mdu read --dir ./books
+mdu epub read --dir ./books
 
 # Save output to file
-mdu read --dir ./books -o metadata.txt
+mdu epub read --dir ./books -o metadata.txt
 
 # List supported metadata fields
-mdu read --list-fields
+mdu epub read --list-fields
 ```
 
 **Supported Fields:**
 - `author` - Book author/creator
-- `title` - Book title
 - `summary` - Book description
 - `isbn` - ISBN identifier
 - `calibre:series` - Series name
 - `calibre:series_index` - Series position
 
-### `update` - Update Metadata
+#### `epub update` - Update EPUB Metadata
 
-Update metadata in EPUB files while preserving the original OPF structure.
-
-**Using command-line flags:**
 ```bash
-mdu update --file book.epub \
+# Update using command-line flags
+mdu epub update --file book.epub \
   --author "Author Name" \
   --series "Series Name" \
   --series-index "1" \
-  --summary "Book description" \
-  --isbn "978-1234567890"
+  --summary "Book description"
 
 # Batch update directory
-mdu update --dir ./books --series "The Expanse"
+mdu epub update --dir ./books --series "The Expanse"
 
 # Update without creating backups
-mdu update --file book.epub --author "New Author" --backup=false
+mdu epub update --file book.epub --author "New Author" --backup=false
+
+# Using input files
+mdu epub update --file book.epub --input metadata.yaml
 ```
 
-**Using input files (recommended for batch operations):**
-```bash
-# Generate a template
-mdu generate -o metadata.yaml
-
-# Edit the template with your metadata
-# Then apply it
-mdu update --file book.epub --input metadata.yaml
-
-# Apply to multiple files
-mdu update --dir ./books --input shared-metadata.yaml
-```
-
-**Flags:**
-- `--file` - Target EPUB file
-- `--dir` - Target directory (batch operation)
-- `--input/-i` - Input file with metadata (JSON or YAML)
-- `--author` - Set author/creator
-- `--summary` - Set book description
-- `--isbn` - Set ISBN identifier
-- `--series` - Set series name (for Kavita)
-- `--series-index` - Set series position (for Kavita)
-- `--backup` - Create backup files (default: true)
-- `--output/-o` - Write results to file
-
-**Note:** Input files take precedence over command-line flags.
-
-### `generate` - Generate Template Files
-
-Create example input files for batch metadata updates.
+#### `epub validate` - Validate EPUB Changes
 
 ```bash
-# Generate JSON template
-mdu generate -o template.json
-
-# Generate YAML template
-mdu generate -o template.yaml
-```
-
-**JSON Format:**
-```json
-{
-  "author": "Author Name",
-  "summary": "Book description or summary",
-  "isbn": "978-1234567890",
-  "series": "Series Name",
-  "series_index": "1",
-  "additional": {
-    "publisher": "Publisher Name",
-    "language": "en-US"
-  }
-}
-```
-
-**YAML Format:**
-```yaml
-# EPUB Metadata Update Template
-author: "Author Name"
-summary: "Book description or summary"
-isbn: "978-1234567890"
-series: "Series Name"
-series_index: "1"
-
-additional:
-  publisher: "Publisher Name"
-  language: "en-US"
-```
-
-### `validate` - Validate Changes
-
-Compare an EPUB file with its backup to validate changes.
-
-```bash
-# After updating with --backup (default)
-mdu update --file book.epub --author "New Author"
-mdu validate --file book.epub
+# Validate changes (compares with .backup file)
+mdu epub validate --file book.epub
 
 # Save validation report
-mdu validate --file book.epub -o validation.txt
+mdu epub validate --file book.epub -o validation.txt
+```
+
+#### `epub check` - Check EPUB Structure
+
+```bash
+# Check single file
+mdu epub check --file book.epub
+
+# Check entire directory
+mdu epub check --dir ./books
+
+# Save check results
+mdu epub check --dir ./books -o validation-report.txt
+```
+
+#### `epub compare` - Compare Two EPUB Files
+
+```bash
+# Compare two EPUB files
+mdu epub compare original.epub modified.epub
+
+# Save comparison report
+mdu epub compare original.epub modified.epub -o diff.txt
+```
+
+---
+
+### ComicInfo Commands
+
+#### `comicinfo search` - Search MangaDex
+
+Search MangaDex for a manga title using fuzzy matching to find the best match.
+
+```bash
+# Search for a manga (returns MangaDex ID)
+mdu comicinfo search "One Piece"
+
+# Multi-word searches work without quotes
+mdu comicinfo search Attack on Titan
+
+# Search for exact matches
+mdu comicinfo search "Berserk"
 ```
 
 **Output Example:**
 ```
-=== METADATA COMPARISON ===
+🔍 Searching MangaDex for: One Piece
 
-~ CHANGED: author
-  Old: Original Author
-  New: New Author
+Best Match (Score: 0.95):
+────────────────────────────────────────
+Name                                     Alt Name                                 Mangadex ID
+---------------------------------------- ---------------------------------------- ----------------------------------------
+One Piece                                ワンピース                                  a1c7c817-4e59-43b7-9365-09675a149a6f
 
-=== SUMMARY ===
-Unchanged: 15
-Changed:   1
-Added:     0
-Removed:   0
+💡 Use this ID with: mdu comicinfo generate --mangadex-id a1c7c817-4e59-43b7-9365-09675a149a6f --dir <path>
 ```
 
-### `compare` - Compare Two Files
+**How Search Works:**
+- Uses token-based fuzzy matching with Levenshtein distance
+- Searches English titles only
+- Combines Jaccard similarity (70%) and edit distance (30%) for scoring
+- Returns the best match with confidence score
 
-Compare metadata between two EPUB files.
+#### `comicinfo generate` - Generate ComicInfo.xml from MangaDex
+
+Create ComicInfo.xml files in your CBZ archives by fetching metadata from MangaDex.
 
 ```bash
-mdu compare original.epub modified.epub
+# Generate for a single file
+mdu comicinfo generate --mangadex-id "abc123-def456" chapter01.cbz
 
-# Save comparison report
-mdu compare original.epub modified.epub -o diff.txt
+# Process entire directory
+mdu comicinfo generate --mangadex-id "abc123-def456" --dir ./chapters
+
+# Positional argument also works
+mdu comicinfo generate --mangadex-id "abc123" ./manga/
 ```
 
-### `check` - Validate EPUB Structure
+**What This Command Does:**
+1. Fetches manga metadata from MangaDex (series title, summary, genres, etc.)
+2. Fetches author and artist names from MangaDex API
+3. Extracts chapter numbers from CBZ filenames
+4. Creates ComicInfo.xml for each chapter with appropriate metadata
+5. Repackages CBZ files with the new ComicInfo.xml
+6. Validates integrity with SHA256 checksums (internal, automatic)
+7. Uses retry logic (up to 3 attempts) if repackaging fails
+8. Replaces original files only after successful validation
 
-Check if EPUB files have valid structure and required metadata.
+**Chapter Number Extraction:**
+
+The command automatically extracts chapter numbers from filenames using these patterns:
+- `ch001`, `ch-01`, `ch_1`, `ch 1`
+- `chapter 1`, `chapter-01`, `chapter_001`
+- `c1`, `c-01`, `c_001`
+- Files like `One Piece - ch100.cbz` → extracts "100"
+- Files like `series_name_chapter_025.cbz` → extracts "25"
+
+**Example Output:**
+```
+🔍 Fetching metadata from MangaDex (ID: abc123)...
+✓ Metadata fetched successfully
+✓ Metadata converted to ComicInfo format
+
+📚 Processing 5 file(s)...
+
+[1/5] Processing: One Piece ch001.cbz
+  📄 Extracted chapter number: 1
+  📁 Created temp directory: /tmp/mdu_One_Piece_ch001_1234567890
+  📦 Extracting CBZ contents...
+  📝 Writing ComicInfo.xml...
+  🗜️  Creating new CBZ file...
+  🔒 Validating CBZ integrity...
+  ✓ Integrity check passed
+  🔄 Replacing original file...
+✓ Successfully processed: One Piece ch001.cbz
+
+[2/5] Processing: One Piece ch002.cbz
+  ...
+
+────────────────────────────────────────
+✓ Successfully processed: 5
+Total files: 5
+
+File - One Piece ch001.cbz:
+
+  Series: One Piece
+  Number: 1
+  Title: Chapter 1
+  Summary: Monkey D. Luffy sets sail...
+  Writer: Eiichiro Oda
+  Penciller: Eiichiro Oda
+  Genre: Action, Adventure, Fantasy
+  ...
+```
+
+#### `comicinfo read` - Read ComicInfo.xml
+
+```bash
+# Read single file
+mdu comicinfo read comic.cbz
+
+# Read with positional argument
+mdu comicinfo read comic.cbz
+
+# Read all files in directory
+mdu comicinfo read --dir ./comics
+
+# Save to file
+mdu comicinfo read --dir ./comics -o metadata.txt
+
+# List supported fields
+mdu comicinfo read --list-fields
+```
+
+#### `comicinfo update` - Update ComicInfo.xml
+
+Update existing ComicInfo.xml metadata in CBZ files.
+
+```bash
+# Update specific fields
+mdu comicinfo update comic.cbz --series "One Piece" --number "100"
+
+# Update with flags
+mdu comicinfo update --file manga.cbz --writer "Author Name" --publisher "Publisher"
+
+# Update multiple files
+mdu comicinfo update --dir ./manga --series "My Series"
+
+# Update from input file
+mdu comicinfo update --file manga.cbz --input metadata.yaml
+
+# Positional argument works
+mdu comicinfo update ./manga/ --series "New Series"
+```
+
+**Supported Flags:**
+- `--series` - Series name
+- `--number` - Issue/chapter number
+- `--volume` - Volume number
+- `--summary` - Issue summary/description
+- `--writer` - Writer name
+- `--publisher` - Publisher name
+
+**Input File Support:**
+
+You can use JSON or YAML files for batch updates:
+
+```yaml
+# metadata.yaml
+author: "Eiichiro Oda"
+series: "One Piece"
+summary: "Chapter description"
+additional:
+  publisher: "Shueisha"
+```
+
+```bash
+mdu comicinfo update --dir ./chapters --input metadata.yaml
+```
+
+#### `comicinfo validate` - Validate CBZ Structure
+
+```bash
+# Validate single file
+mdu comicinfo validate comic.cbz
+
+# With positional argument
+mdu comicinfo validate comic.cbz
+
+# Save validation report
+mdu comicinfo validate --file comic.cbz -o validation.txt
+```
+
+**Validation Checks:**
+- CBZ file can be opened as ZIP archive
+- ComicInfo.xml exists in archive
+- ComicInfo.xml has valid XML structure
+- All files in archive are readable
+
+#### `comicinfo check` - Check CBZ Files
+
+Check multiple CBZ files for validity and ComicInfo.xml presence.
 
 ```bash
 # Check single file
-mdu check --file book.epub
+mdu comicinfo check comic.cbz
 
-# Check entire directory
-mdu check --dir ./books
+# Check directory
+mdu comicinfo check --dir ./comics
 
-# Save check results
-mdu check --dir ./books -o validation-report.txt
+# Save report
+mdu comicinfo check --dir ./comics -o report.txt
 ```
 
-**Validates:**
-- ✓ `META-INF/container.xml` exists
-- ✓ OPF file exists at location specified in container.xml
-- ✓ OPF file is readable
-- ✓ Required metadata present (title, identifier, language)
+**Output Example:**
+```
+=== Checking: manga_ch001.cbz ===
+✓ CBZ structure valid
+✓ ComicInfo.xml found and readable
+  Series: One Piece
+  Number: 1
+  Writer: Eiichiro Oda
 
-## Using Input Files
+=== Checking: manga_ch002.cbz ===
+⚠  CBZ structure valid but ComicInfo.xml not found
 
-Input files are ideal for batch operations and complex metadata management.
+=== Summary ===
+Valid (with ComicInfo.xml): 1
+Valid (missing ComicInfo.xml): 1
+Invalid: 0
+```
 
-### Basic Workflow
+#### `comicinfo compare` - Compare Two CBZ Files
 
 ```bash
-# 1. Generate a template
-mdu generate -o metadata.yaml
+# Compare metadata between files
+mdu comicinfo compare original.cbz modified.cbz
 
-# 2. Edit the template with your metadata
-# (use your favorite text editor)
-
-# 3. Apply to your files
-mdu update --file book.epub --input metadata.yaml
-
-# 4. Validate changes
-mdu validate --file book.epub
+# Save comparison
+mdu comicinfo compare original.cbz modified.cbz -o diff.txt
 ```
 
-### Use Case: Shared Series Metadata
+---
 
-Create one file with common series information, customize per book:
+## ComicInfo.xml Format
 
-**shared-series.yaml:**
-```yaml
-author: "James S.A. Corey"
-series: "The Expanse"
-additional:
-  publisher: "Orbit Books"
-  language: "en"
+ComicInfo.xml is the standard metadata format for comic book archives, supported by many readers including Kavita, Komga, and others.
+
+### Standard Fields
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `Series` | String | Series name | "One Piece" |
+| `Number` | String | Issue/chapter number | "1", "100.5" |
+| `Volume` | String | Volume number | "1" |
+| `Title` | String | Chapter/issue title | "Romance Dawn" |
+| `Summary` | String | Chapter description | "The adventure begins..." |
+| `Writer` | String | Author(s) | "Eiichiro Oda" |
+| `Penciller` | String | Artist(s) | "Eiichiro Oda" |
+| `Publisher` | String | Publisher name | "Shueisha" |
+| `Genre` | String | Genre (comma-separated) | "Action, Adventure, Fantasy" |
+| `Tags` | String | Tags (comma-separated) | "Shounen, Pirates" |
+| `LanguageISO` | String | Language code | "en", "ja" |
+| `Manga` | String | Reading direction | "Yes", "YesAndRightToLeft" |
+| `PageCount` | Integer | Number of pages | 20 |
+| `Year` | Integer | Publication year | 1997 |
+| `Month` | Integer | Publication month (1-12) | 7 |
+| `Day` | Integer | Publication day (1-31) | 22 |
+| `Web` | String | Source URL | "https://mangadex.org/title/..." |
+| `AgeRating` | String | Content rating | "Everyone", "Teen", "Mature 17+" |
+| `BlackAndWhite` | String | Color information | "Yes", "No" |
+| `Notes` | String | Additional notes | "Status: ongoing" |
+
+### Example ComicInfo.xml
+
+```xml
+<?xml version="1.0"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+           xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Series>One Piece</Series>
+  <Number>1</Number>
+  <Volume>1</Volume>
+  <Title>Chapter 1</Title>
+  <Summary>Monkey D. Luffy sets sail to become the Pirate King...</Summary>
+  <Writer>Eiichiro Oda</Writer>
+  <Penciller>Eiichiro Oda</Penciller>
+  <Publisher>Shueisha</Publisher>
+  <Genre>Action, Adventure, Fantasy</Genre>
+  <Tags>Shounen, Pirates</Tags>
+  <Manga>Yes</Manga>
+  <LanguageISO>ja</LanguageISO>
+  <PageCount>20</PageCount>
+  <Year>1997</Year>
+  <Month>7</Month>
+  <Web>https://mangadex.org/title/a1c7c817-4e59-43b7-9365-09675a149a6f</Web>
+  <Notes>Status: ongoing</Notes>
+  <AgeRating>Teen</AgeRating>
+  <BlackAndWhite>Yes</BlackAndWhite>
+</ComicInfo>
 ```
 
-**Apply to each book:**
+## MangaDex Integration
+
+mdu integrates directly with the MangaDex API to fetch accurate manga metadata.
+
+### Finding MangaDex IDs
+
+**Method 1: Use the search command (Recommended)**
 ```bash
-mdu update --file "Leviathan Wakes.epub" \
-  --input shared-series.yaml \
-  --series-index "1" \
-  --summary "Humanity has colonized the solar system..."
+# Search by title
+mdu comicinfo search "Attack on Titan"
 
-mdu update --file "Caliban's War.epub" \
-  --input shared-series.yaml \
-  --series-index "2" \
-  --summary "On Ganymede, breadbasket of the outer planets..."
+# Output shows the MangaDex ID
+💡 Use this ID with: mdu comicinfo generate --mangadex-id 304ceac3-8cdb-4fe7-acf7-2b6ff7a60613 --dir <path>
 ```
 
-### Use Case: Complete Per-Book Metadata
+**Method 2: From Browser**
+- Visit the manga on MangaDex.org
+- Copy the ID from the URL: `https://mangadex.org/title/{manga-id}/manga-name`
 
-Create individual metadata files for each book:
+### Fetched Metadata
 
-**vol1-metadata.json:**
+When you provide a MangaDex ID, mdu automatically retrieves:
+
+- **Series Information**: Title (English preferred), description
+- **Chapter Details**: Volume/chapter numbers, title
+- **Creator Credits**: Authors and artists (fetched from API by ID)
+- **Publication Info**: Release dates, publisher
+- **Language & Region**: Original language
+- **Reading Direction**: Set to "Yes" for manga
+- **Tags & Genres**: Categories separated into Genre and Tags fields
+- **Content Rating**: Mapped to appropriate age ratings
+- **Status**: Ongoing, completed, etc.
+
+### Complete Workflow Example
+
+```bash
+# 1. Search for the manga
+mdu comicinfo search "One Piece"
+# Output: MangaDex ID: a1c7c817-4e59-43b7-9365-09675a149a6f
+
+# 2. Generate ComicInfo.xml for all chapters
+mdu comicinfo generate \
+  --mangadex-id "a1c7c817-4e59-43b7-9365-09675a149a6f" \
+  --dir ./One_Piece_Chapters/
+
+# 3. Verify the results
+mdu comicinfo check --dir ./One_Piece_Chapters/ -o verification.txt
+```
+
+## Input Files for Batch Operations
+
+For complex metadata or batch operations, use JSON or YAML input files.
+
+### Generate Template
+
+```bash
+# Generate template for EPUB
+mdu generate --output epub-template.yaml --format epub
+
+# Generate template for ComicInfo
+mdu generate --output comic-template.json --format comic
+```
+
+### JSON Format
+
 ```json
 {
-  "author": "Shimesaba",
-  "summary": "Volume 1 description",
-  "series": "Higehiro",
+  "author": "Eiichiro Oda",
+  "summary": "Chapter description",
+  "series": "One Piece",
   "series_index": "1",
-  "isbn": "9781975344207"
+  "additional": {
+    "publisher": "Shueisha",
+    "language": "en"
+  }
 }
 ```
 
-**Apply:**
-```bash
-mdu update --file vol1.epub --input vol1-metadata.json
-mdu update --file vol2.epub --input vol2-metadata.json
-mdu update --file vol3.epub --input vol3-metadata.json
+### YAML Format
+
+```yaml
+# Metadata Template
+author: "Eiichiro Oda"
+summary: "Chapter description"
+series: "One Piece"
+series_index: "1"
+
+additional:
+  publisher: "Shueisha"
+  language: "en"
 ```
 
-## Kavita Integration
-
-Kavita uses specific metadata fields to organize your library:
-
-| Field | Kavita Uses For | How to Set |
-|-------|----------------|------------|
-| `calibre:series` | Series grouping | `--series` flag or `series` in input file |
-| `calibre:series_index` | Series order | `--series-index` flag or `series_index` in input file |
-| `dc:creator` | Author | `--author` flag or `author` in input file |
-| `dc:description` | Book description | `--summary` flag or `summary` in input file |
-| `dc:title` | Book title | Read-only (use calibre or other tools to change) |
-
-### Complete Kavita Workflow
+### Using Input Files
 
 ```bash
-# 1. Check your EPUBs are valid
-mdu check --dir ./my-books
-
-# 2. Create metadata template for the series
-mdu generate -o expanse-metadata.yaml
-
-# 3. Edit with your series info
-cat > expanse-metadata.yaml << EOF
-author: "James S.A. Corey"
-series: "The Expanse"
+# Create shared series metadata
+cat > series-metadata.yaml << EOF
+author: "Kohei Horikoshi"
+series: "My Hero Academia"
 additional:
-  publisher: "Orbit Books"
+  publisher: "Shueisha"
   language: "en"
 EOF
 
-# 4. Apply to each book with unique series_index and summary
-mdu update \
-  --file "Leviathan Wakes.epub" \
-  --input expanse-metadata.yaml \
-  --series-index "1" \
-  --summary "Book 1 summary..."
-
-mdu update \
-  --file "Caliban's War.epub" \
-  --input expanse-metadata.yaml \
-  --series-index "2" \
-  --summary "Book 2 summary..."
-
-# 5. Validate all changes
-mdu check --dir . -o validation.txt
-
-# 6. Import into Kavita - series will be properly organized!
+# Apply to multiple files
+mdu comicinfo update --file "MHA Ch001.cbz" --input series-metadata.yaml --number "1"
+mdu comicinfo update --file "MHA Ch002.cbz" --input series-metadata.yaml --number "2"
+mdu comicinfo update --file "MHA Ch003.cbz" --input series-metadata.yaml --number "3"
 ```
 
-## How It Works
+## Chapter Number Detection
 
-### EPUB Structure
+mdu automatically extracts chapter numbers from filenames using these patterns:
 
-EPUB files are ZIP archives with a specific structure:
+### Supported Patterns
 
 ```
-book.epub
-├── META-INF/
-│   └── container.xml          # Points to OPF file location
-├── OEBPS/                     # Common content directory
-│   ├── package.opf            # Metadata, manifest, spine
-│   ├── chapter1.xhtml
-│   └── ...
-└── mimetype
+ch001, ch-01, ch_1, ch 1           → extracts: 1, 1, 1, 1
+chapter 1, chapter-01, chapter_001  → extracts: 1, 1, 1
+c1, c-01, c_001                     → extracts: 1, 1, 1
+something-ch01                      → extracts: 1
+series_name_chapter_025             → extracts: 25
 ```
 
-### Metadata Location
+### Pattern Matching
 
-1. `META-INF/container.xml` specifies the OPF file location:
-```xml
-<container>
-  <rootfiles>
-    <rootfile full-path="OEBPS/package.opf" .../>
-  </rootfiles>
-</container>
+The patterns are case-insensitive and work with:
+- Leading zeros are removed (ch001 → 1, ch100 → 100)
+- Various separators: `-`, `_`, space
+- Prefixes: `ch`, `chapter`, `c`
+- Embedded chapter indicators in longer filenames
+
+### Examples
+
+```bash
+# These filenames will have chapters auto-detected:
+One Piece - ch001.cbz          → Chapter: 1
+one_piece_chapter_100.cbz      → Chapter: 100
+[Group] Series c025.cbz        → Chapter: 25
+attack-on-titan-ch-050.cbz     → Chapter: 50
+
+# Files without detectable patterns will be skipped
+random_file.cbz                → ⚠️  Skipped (no chapter number found)
 ```
 
-2. The OPF file (e.g., `OEBPS/package.opf`) contains all metadata:
-```xml
-<package>
-  <metadata>
-    <dc:title>Book Title</dc:title>
-    <dc:creator>Author Name</dc:creator>
-    <dc:identifier opf:scheme="ISBN">978-1234567890</dc:identifier>
-    <meta name="calibre:series" content="Series Name"/>
-    <meta name="calibre:series_index" content="1"/>
-  </metadata>
-  <manifest>...</manifest>
-  <spine>...</spine>
-</package>
+## Integrity Validation
+
+mdu uses SHA256 checksums internally to ensure CBZ files are correctly repackaged.
+
+### How It Works
+
+1. **During Repackaging**:
+   - Extracts CBZ to temporary directory
+   - Adds/updates ComicInfo.xml
+   - Creates new CBZ file
+   - Validates all files in new CBZ are readable
+   - Verifies SHA256 checksums of all extracted files match archived files
+   - Replaces original only if validation passes
+
+2. **Automatic Retry Logic**:
+   - If validation fails, retries up to 3 times
+   - Cleans up failed attempts automatically
+   - Only replaces original after successful validation
+
+3. **Safety Features**:
+   - Temporary directories used (cleaned up automatically)
+   - Original preserved until new file validates
+   - ZipSlip vulnerability protection
+   - All files verified readable before replacement
+
+**Note:** This is an internal integrity check, not a user-facing checksum feature for tracking file modifications over time.
+
+## Media Server Integration
+
+### Kavita
+
+Kavita uses ComicInfo.xml to organize manga and comics.
+
+**Key Fields for Kavita:**
+- `Series`: Groups files into series
+- `Number`: Orders chapters/issues
+- `Volume`: Groups chapters into volumes
+- `LocalizedSeries`: Display name (alternative series name)
+
+```bash
+# Prepare manga for Kavita
+mdu comicinfo generate \
+  --mangadex-id "abc123" \
+  --dir ./manga
+
+# Verify before importing
+mdu comicinfo check --dir ./manga -o validation.txt
 ```
 
-### Preservation Strategy
+### Komga
 
-**Why not standard XML parsing?**
+Komga also reads ComicInfo.xml with similar fields.
 
-Traditional XML unmarshaling/marshaling can lose:
-- XML namespace declarations (`xmlns:dc`, `xmlns:opf`, `xmlns:calibre`)
-- Formatting and whitespace
-- Comment nodes
-- Attribute order
-- Unknown elements
+**Additional Komga Features:**
+- Reads `Publisher` for filtering
+- Uses `Genre` and `Tags`
+- Displays `Summary` in reader
+- Supports `Web` links
 
-**mdu's approach:**
-
-1. Reads the entire OPF file as text
-2. Uses targeted string manipulation to update specific elements
-3. Writes the modified content back, preserving everything else
-4. Only the fields you explicitly update are changed
-
-This ensures:
-- ✅ All XML namespaces preserved
-- ✅ Original formatting maintained
-- ✅ All attributes kept intact
-- ✅ Unknown elements remain untouched
-- ✅ EPUB stays valid
-
-## EPUB Specification
-
-### Required Metadata (EPUB 3 Spec)
-
-Every valid EPUB must have:
-- **`dc:title`** - Book title
-- **`dc:identifier`** - Unique identifier (ISBN, UUID, etc.)
-- **`dc:language`** - Language code (e.g., "en-US")
-
-mdu validates these requirements and will warn if they're missing.
-
-### Common OPF Locations
-
-While the EPUB spec doesn't mandate a specific location, common conventions include:
-- `OEBPS/content.opf`
-- `OEBPS/package.opf`
-- `content.opf` (root level)
-- `OPS/package.opf`
-
-The actual location is specified in `META-INF/container.xml` and mdu automatically finds it.
-
-## Error Handling
-
-### Invalid EPUB
+```bash
+# Add comprehensive metadata for Komga
+mdu comicinfo update --file manga.cbz \
+  --series "One Piece" \
+  --publisher "Shueisha" \
+  --summary "Full description..."
 ```
-Error: failed to locate OPF file: container.xml not found in META-INF
-```
-**Fix:** File is not a valid EPUB. Re-download or use a different file.
 
-### Missing Required Metadata
-```
-Warning: missing required EPUB metadata fields: dc:title, dc:language
-```
-**Fix:** Add missing fields manually with an EPUB editor, or the EPUB may have issues with some readers.
+### Other Supported Readers
 
-### OPF File Not Found
-```
-Error: failed to read OPF file at 'OEBPS/content.opf': file not found
-```
-**Fix:** EPUB structure is broken - `container.xml` points to non-existent OPF file.
+ComicInfo.xml is supported by:
+- **Panels** (iOS)
+- **Perfect Viewer** (Android)
+- **CDisplayEx** (Windows)
+- **Chunky** (iOS)
+- **Tachiyomi** (Android)
+- **YACReader** (Cross-platform)
 
 ## Best Practices
 
-1. **Always keep backups** - The tool creates `.backup` files by default, but keep original files elsewhere too
-2. **Test on one file first** - Before batch operations, test on a single file and validate
-3. **Use `--all` flag** - See all available metadata fields before updating
-4. **Run `check` before updating** - Validate EPUB structure before making changes
-5. **Use `validate` after updates** - Verify changes are correct
-6. **Use input files for series** - Easier to manage consistent metadata across multiple books
-7. **Version control your metadata** - Keep input files in git for reproducibility
+### For EPUB Files
+1. **Always keep backups** - Use default backup behavior or keep originals elsewhere
+2. **Test on one file first** - Before batch operations
+3. **Use `check` before updating** - Validate structure first
+4. **Use input files for series** - Easier to manage consistent metadata
+
+### For CBZ Files
+1. **Use MangaDex search** - Find correct manga IDs with `comicinfo search`
+2. **Organize files first** - Use consistent chapter naming for auto-detection
+3. **Verify after generation** - Run `comicinfo check` to ensure success
+4. **Test with one file** - Always test new operations on a single file first
+5. **Trust the retry logic** - If generation fails, it will automatically retry up to 3 times
+
+### File Organization
+
+```
+manga-library/
+├── One Piece/
+│   ├── One Piece - ch001.cbz  ← Include series name and chapter
+│   ├── One Piece - ch002.cbz
+│   └── One Piece - ch003.cbz
+├── Attack on Titan/
+│   ├── aot_chapter_001.cbz    ← Various formats work
+│   └── aot_chapter_002.cbz
+└── metadata/
+    ├── one-piece-metadata.yaml  ← Store templates
+    └── aot-metadata.yaml
+```
 
 ## Examples
 
-### Example 1: Simple Update
-```bash
-# Update a single book
-mdu update --file book.epub \
-  --author "Brandon Sanderson" \
-  --series "Mistborn" \
-  --series-index "1"
+### Example 1: Complete MangaDex Workflow
 
-# Validate the changes
-mdu validate --file book.epub
+```bash
+# Step 1: Search for manga
+mdu comicinfo search "Chainsaw Man"
+# Output shows: ID = a1c7c817-4e59-43b7-9365-09675a149a6f
+
+# Step 2: Generate metadata for all chapters
+mdu comicinfo generate \
+  --mangadex-id "a1c7c817-4e59-43b7-9365-09675a149a6f" \
+  --dir ~/manga/chainsaw_man/
+
+# Step 3: Verify results
+mdu comicinfo check --dir ~/manga/chainsaw_man/ -o check.txt
+
+# Step 4: Import into Kavita or Komga
 ```
 
-### Example 2: Batch Series Update
+### Example 2: Update Existing Collection
+
 ```bash
-# Create metadata template
-cat > mistborn.yaml << EOF
-author: "Brandon Sanderson"
-series: "Mistborn"
+# Check current state
+mdu comicinfo read --dir ./manga -o before.txt
+
+# Create shared metadata
+cat > metadata.yaml << EOF
+series: "Bleach"
+author: "Tite Kubo"
 additional:
-  publisher: "Tor Books"
+  publisher: "Shueisha"
   language: "en"
 EOF
 
-# Update each book
-mdu update --file "The Final Empire.epub" --input mistborn.yaml --series-index "1"
-mdu update --file "The Well of Ascension.epub" --input mistborn.yaml --series-index "2"
-mdu update --file "The Hero of Ages.epub" --input mistborn.yaml --series-index "3"
+# Update all files
+mdu comicinfo update --dir ./manga --input metadata.yaml
 
-# Check all files
-mdu check --dir . -o validation.txt
+# Verify changes
+mdu comicinfo check --dir ./manga -o after.txt
 ```
 
-### Example 3: Fix Missing Metadata
+### Example 3: Mixed Manual and MangaDex Metadata
+
 ```bash
-# Check what's missing
-mdu check --dir ./books
+# Some files have MangaDex data
+mdu comicinfo generate \
+  --mangadex-id "abc123" \
+  --dir ./series1/
 
-# Create fix template
-cat > fix-metadata.yaml << EOF
-additional:
-  language: "en-US"
-  publisher: "Publisher Name"
-EOF
+# Others need manual updates
+mdu comicinfo update ./series2/ch001.cbz \
+  --series "Custom Series" \
+  --number "1" \
+  --writer "Author Name"
 
-# Apply fixes
-mdu update --dir ./books --input fix-metadata.yaml
-
-# Verify fixes
-mdu check --dir ./books -o after-fix.txt
+# Check everything
+mdu comicinfo check --dir . -o full_report.txt
 ```
 
-### Example 4: Light Novel Series
+### Example 4: Batch Process Multiple Series
+
 ```bash
-# Generate template
-mdu generate -o higehiro.yaml
+# Create a script for multiple series
+#!/bin/bash
 
-# Edit template
-cat > higehiro.yaml << EOF
-author: "Shimesaba"
-series: "Higehiro: After Being Rejected, I Shaved and Took in a High School Runaway"
-additional:
-  publisher: "Yen Press"
-  language: "en-US"
-EOF
+# Series 1
+mdu comicinfo generate \
+  --mangadex-id "id-for-series-1" \
+  --dir ./Series_1/
 
-# Update each volume
-for i in {1..5}; do
-  mdu update \
-    --file "Higehiro v$(printf '%02d' $i).epub" \
-    --input higehiro.yaml \
-    --series-index "$i" \
-    --summary "Volume $i description"
+# Series 2
+mdu comicinfo generate \
+  --mangadex-id "id-for-series-2" \
+  --dir ./Series_2/
+
+# Series 3
+mdu comicinfo generate \
+  --mangadex-id "id-for-series-3" \
+  --dir ./Series_3/
+
+# Verify all
+for dir in ./*/; do
+  echo "Checking $dir"
+  mdu comicinfo check --dir "$dir"
 done
+```
 
-# Validate all
-mdu check --dir .
+## Troubleshooting
+
+### Common Issues
+
+**"Could not extract chapter number from filename"**
+```bash
+# Files are skipped if chapter number can't be detected
+# Solution: Rename files to include chapter numbers
+mv "random_name.cbz" "series_ch001.cbz"
+```
+
+**"No ComicInfo.xml found in archive"**
+```bash
+# File doesn't have ComicInfo.xml
+# Solution: Generate or update to add it
+mdu comicinfo update --file manga.cbz --series "Series" --number "1"
+```
+
+**"MangaDex API error" or "failed to fetch MangaDex metadata"**
+```bash
+# Wrong MangaDex ID or API issues
+# Solution: Use search to find correct ID
+mdu comicinfo search "Series Name"
+```
+
+**"Failed after 3 attempts: integrity validation failed"**
+```bash
+# CBZ repackaging failed multiple times
+# This is rare - possible causes:
+# - Corrupted source CBZ file
+# - Disk space issues
+# - File permissions problems
+
+# Solution: Check the source file is valid
+mdu comicinfo validate original.cbz
+
+# Try with a different file to isolate the issue
+```
+
+**"Cannot open CBZ" or "failed to open CBZ"**
+```bash
+# File is not a valid ZIP archive
+# Solution: Re-download or recreate the CBZ file
+unzip -t file.cbz  # Test ZIP validity
 ```
 
 ## Technical Details
 
+### CBZ File Structure
+
+CBZ files are ZIP archives containing images and optional metadata:
+
+```
+manga.cbz (ZIP archive)
+├── 001.jpg
+├── 002.jpg
+├── 003.jpg
+├── ...
+└── ComicInfo.xml  ← Metadata file
+```
+
 ### Dependencies
 
-- Go 1.16 or higher
+- Go 1.20 or higher
 - `github.com/spf13/cobra` - CLI framework
 - `gopkg.in/yaml.v3` - YAML parsing
+- `github.com/agnivade/levenshtein` - Fuzzy string matching
+- `github.com/mattn/go-runewidth` - Unicode-aware text width
+- Standard library: archive/zip, crypto/sha256, encoding/xml, encoding/json
 
 ### Supported File Formats
 
-- **Input files:** `.json`, `.yaml`, `.yml`
-- **EPUB files:** Standard EPUB 2 and EPUB 3 formats
-
-### Thread Safety
-
-- Safe for concurrent reads (multiple `read` commands)
-- Updates are atomic (create new file, then replace)
-- No file locking (don't run multiple updates on same file simultaneously)
+- **EPUB**: `.epub` files (EPUB 2 and EPUB 3)
+- **CBZ**: `.cbz` (ZIP-based comic archives)
+- **Input**: `.json`, `.yaml`, `.yml` for metadata templates
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests if applicable
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ## License
 
-[Add your license here]
+[MIT License](LICENSE)
 
 ## Acknowledgments
 
-Built for use with [Kavita](https://www.kavitareader.com/) media management.
+- Built for use with [Kavita](https://www.kavitareader.com/) and [Komga](https://komga.org/)
+- MangaDex API integration for metadata
+- ComicInfo.xml standard from [Anansi Project](https://github.com/anansi-project/comicinfo)
+- Fuzzy search powered by Levenshtein distance algorithm
 
 ## Support
 
-If you encounter any issues or have questions:
-1. Check the [error handling](#error-handling) section
-2. Run `mdu check` on your EPUB files to validate structure
-3. Open an issue on GitHub with the error message and EPUB details
+If you encounter issues:
+
+1. Check this README and examples
+2. Search [existing issues](https://github.com/adamfitz/mdu/issues)
+3. Open a new issue with:
+   - Command you ran (exact command line)
+   - Error message (full output)
+   - File details (filename pattern, how many files)
+   - Operating system and version
+   - mdu version (`mdu --version`)
 
 ---
 
-**Note:** This tool modifies EPUB files. Always keep backups of your original files!
+**Note:** This tool modifies EPUB and CBZ files. Always keep backups of your original files!
