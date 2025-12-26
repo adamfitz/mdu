@@ -12,6 +12,7 @@ import (
 	"mdu/mangasrc"
 
 	"github.com/mattn/go-runewidth"
+	"golang.org/x/text/width"
 )
 
 // Formats metadata as a two-column table and returns it as a string.
@@ -82,76 +83,6 @@ func RenderMetadataWithHeader(filename string, md map[string]string) string {
 	sb.WriteString(RenderMetadataOutput(md))
 	sb.WriteString("\n")
 	return sb.String()
-}
-
-// PrintTitleSearchResults prints the main titles and Mangadex IDs in two columns.
-// Accepts the return value from MangadexTitleSearch().
-// PrintTitleSearchResults wraps titles to fit a fixed column width while keeping ID on the first line.
-func PrintTitleSearchResults(results []mangasrc.MangadexTitleSearchResponse) {
-	if len(results) == 0 {
-		fmt.Println("No results to display")
-		return
-	}
-
-	// Column widths
-	const colWidth = 40
-
-	// Print header
-	fmt.Printf("%s %s %s\n",
-		padRight("Name", colWidth),
-		padRight("Alt Name", colWidth),
-		padRight("Mangadex ID", colWidth))
-	fmt.Printf("%s %s %s\n",
-		strings.Repeat("-", colWidth),
-		strings.Repeat("-", colWidth),
-		strings.Repeat("-", colWidth))
-
-	for _, r := range results {
-		mainTitle := r.MainTitle
-		if mainTitle == "" {
-			mainTitle = "-"
-		}
-
-		altTitle := ""
-		if len(r.AltTitles) > 0 {
-			altTitle = r.AltTitles[0]
-		} else {
-			altTitle = "-"
-		}
-
-		// Wrap both title columns
-		mainLines := wrapText(mainTitle, colWidth)
-		altLines := wrapText(altTitle, colWidth)
-
-		// Determine max lines needed
-		maxLines := len(mainLines)
-		if len(altLines) > maxLines {
-			maxLines = len(altLines)
-		}
-
-		// Print each line
-		for i := 0; i < maxLines; i++ {
-			mainLine := ""
-			if i < len(mainLines) {
-				mainLine = mainLines[i]
-			}
-
-			altLine := ""
-			if i < len(altLines) {
-				altLine = altLines[i]
-			}
-
-			idLine := ""
-			if i == 0 {
-				idLine = r.ID
-			}
-
-			fmt.Printf("%s %s %s\n",
-				padRight(mainLine, colWidth),
-				padRight(altLine, colWidth),
-				padRight(idLine, colWidth))
-		}
-	}
 }
 
 // wrapText splits a string into lines of max display width, respecting word boundaries.
@@ -374,4 +305,134 @@ func filterCBZFiles(files []string) []string {
 		}
 	}
 	return filtered
+}
+
+// visualWidth returns the visual/display width of a string
+// accounting for wide characters (like CJK) that take 2 columns
+func visualWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			w += 2
+		default:
+			w += 1
+		}
+	}
+	return w
+}
+
+// wrapTextByVisualWidth wraps text based on visual width, not byte/rune count
+func wrapTextByVisualWidth(text string, maxWidth int) []string {
+	if text == "" {
+		return []string{""}
+	}
+
+	var lines []string
+	var currentLine []rune
+	currentWidth := 0
+
+	for _, r := range text {
+		runeWidth := 1
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			runeWidth = 2
+		}
+
+		// If adding this rune would exceed maxWidth, start a new line
+		if currentWidth+runeWidth > maxWidth && len(currentLine) > 0 {
+			lines = append(lines, string(currentLine))
+			currentLine = []rune{r}
+			currentWidth = runeWidth
+		} else {
+			currentLine = append(currentLine, r)
+			currentWidth += runeWidth
+		}
+	}
+
+	// Add the last line
+	if len(currentLine) > 0 {
+		lines = append(lines, string(currentLine))
+	}
+
+	return lines
+}
+
+// padRightByVisualWidth pads a string to a fixed visual width
+func padRightByVisualWidth(s string, width int) string {
+	vw := visualWidth(s)
+	if vw >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-vw)
+}
+
+// PrintTitleSearchResults prints the main titles and Mangadex IDs in two columns.
+// Accepts the return value from MangadexTitleSearch().
+// PrintTitleSearchResults wraps titles to fit a fixed column width while keeping ID on the first line.
+func PrintTitleSearchResults(results []mangasrc.MangadexTitleSearchResponse) {
+	if len(results) == 0 {
+		fmt.Println("No results to display")
+		return
+	}
+
+	// Column widths (visual width)
+	const colWidth = 40
+
+	// Print header
+	fmt.Printf("%s %s %s\n",
+		padRightByVisualWidth("Name", colWidth),
+		padRightByVisualWidth("Alt Name", colWidth),
+		padRightByVisualWidth("Mangadex ID", colWidth))
+	fmt.Printf("%s %s %s\n",
+		strings.Repeat("-", colWidth),
+		strings.Repeat("-", colWidth),
+		strings.Repeat("-", colWidth))
+
+	for _, r := range results {
+		mainTitle := r.MainTitle
+		if mainTitle == "" {
+			mainTitle = "-"
+		}
+
+		altTitle := ""
+		if len(r.AltTitles) > 0 {
+			altTitle = r.AltTitles[0]
+		} else {
+			altTitle = "-"
+		}
+
+		// Wrap both title columns based on visual width
+		mainLines := wrapTextByVisualWidth(mainTitle, colWidth)
+		altLines := wrapTextByVisualWidth(altTitle, colWidth)
+
+		// Determine max lines needed
+		maxLines := len(mainLines)
+		if len(altLines) > maxLines {
+			maxLines = len(altLines)
+		}
+
+		// Print each line
+		for i := 0; i < maxLines; i++ {
+			mainLine := ""
+			if i < len(mainLines) {
+				mainLine = mainLines[i]
+			}
+
+			altLine := ""
+			if i < len(altLines) {
+				altLine = altLines[i]
+			}
+
+			idLine := ""
+			if i == 0 {
+				idLine = r.ID
+			}
+
+			fmt.Printf("%s %s %s\n",
+				padRightByVisualWidth(mainLine, colWidth),
+				padRightByVisualWidth(altLine, colWidth),
+				padRightByVisualWidth(idLine, colWidth))
+		}
+	}
 }
