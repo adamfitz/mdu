@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -595,6 +596,7 @@ This command:
 	return cmd
 }
 
+// newComicInfoSearchCmd creates the 'comicinfo search' command
 func newComicInfoSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <title>",
@@ -627,19 +629,54 @@ The search uses English titles only and performs fuzzy matching to find the clos
 			// Extract all the returned titles
 			searchResults := parser.ExtractEnglishTitles(mdTitles)
 
-			// Search for the best match
-			nameMatch, score := parser.BestTokenMatch(title, searchResults)
-
-			result := parser.FindEntryByTitle(mdTitles, nameMatch)
-			if result == nil {
-				return fmt.Errorf("could not find matching entry")
+			// Score all results and sort them
+			type scoredResult struct {
+				result mangasrc.MangadexTitleSearchResponse
+				title  string
+				score  float64
 			}
 
-			// Print results
-			fmt.Printf("Best Match (Score: %.2f):\n", score)
+			scoredResults := make([]scoredResult, 0, len(mdTitles))
+			for i, result := range mdTitles {
+				score := parser.ScoreTitleTokens(title, searchResults[i])
+				scoredResults = append(scoredResults, scoredResult{
+					result: result,
+					title:  searchResults[i],
+					score:  score,
+				})
+			}
+
+			// Sort by score descending
+			sort.Slice(scoredResults, func(i, j int) bool {
+				return scoredResults[i].score > scoredResults[j].score
+			})
+
+			// Print best match
+			bestMatchResult := &scoredResults[0].result
+			bestMatchScore := scoredResults[0].score
+
+			fmt.Printf("Best Match (Score: %.2f):\n", bestMatchScore)
 			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*result})
-			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", result.ID)
+			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*bestMatchResult})
+
+			// Print remaining top matches (up to 9 more)
+			if len(scoredResults) > 1 {
+				remainingCount := len(scoredResults) - 1
+				if remainingCount > 9 {
+					remainingCount = 9
+				}
+
+				var remainingMatches []mangasrc.MangadexTitleSearchResponse
+				for i := 1; i <= remainingCount; i++ {
+					remainingMatches = append(remainingMatches, scoredResults[i].result)
+				}
+
+				fmt.Printf("\nOther Top Matches:\n")
+				fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+				parser.PrintTitleSearchResults(remainingMatches)
+			}
+
+			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", bestMatchResult.ID)
 
 			return nil
 		},

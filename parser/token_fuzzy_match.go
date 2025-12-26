@@ -2,6 +2,7 @@ package parser
 
 import (
 	"github.com/agnivade/levenshtein"
+	"sort"
 	"strings"
 )
 
@@ -81,7 +82,39 @@ func ScoreTitleTokens(query, title string) float64 {
 	return (j*0.7 + editSim*0.3)
 }
 
+// TitleMatch represents a title and its similarity score.
+type TitleMatch struct {
+	Title string
+	Score float64
+}
+
+// TopTokenMatches returns the top N matches sorted by score (highest first).
+func TopTokenMatches(query string, titles []string, n int) []TitleMatch {
+	matches := make([]TitleMatch, 0, len(titles))
+
+	for _, t := range titles {
+		score := ScoreTitleTokens(query, t)
+		matches = append(matches, TitleMatch{
+			Title: t,
+			Score: score,
+		})
+	}
+
+	// Sort by score descending
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Score > matches[j].Score
+	})
+
+	// Return top N (or all if fewer than N)
+	if n > len(matches) {
+		n = len(matches)
+	}
+
+	return matches[:n]
+}
+
 // BestTokenMatch returns the best title and similarity score.
+// Kept for backward compatibility.
 func BestTokenMatch(query string, titles []string) (string, float64) {
 	bestTitle := ""
 	bestScore := -1.0
