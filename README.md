@@ -57,21 +57,6 @@ sudo rpm -i mdu_x86_64.rpm
 mdu --version
 ```
 
-#### Linux (Binary)
-```bash
-# Download the binary
-wget https://github.com/adamfitz/mdu/releases/latest/download/mdu-linux-amd64 -O mdu
-
-# Make executable
-chmod +x mdu
-
-# Move to PATH (optional)
-sudo mv mdu /usr/local/bin/
-
-# Run
-mdu --version
-```
-
 ### Build from Source
 
 ```bash
@@ -219,15 +204,31 @@ mdu comicinfo search "Berserk"
 
 **Output Example:**
 ```
+$ go run . comicinfo search  One Piece
+
 🔍 Searching MangaDex for: One Piece
 
-Best Match (Score: 0.95):
-────────────────────────────────────────
-Name                                     Alt Name                                 Mangadex ID
+Best Match (Score: 1.00):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Name                                     Alt Name                                 Mangadex ID                             
 ---------------------------------------- ---------------------------------------- ----------------------------------------
-One Piece                                ワンピース                                  a1c7c817-4e59-43b7-9365-09675a149a6f
+One Piece Party                          ワンピースパーティー                     a0b49136-9f4d-46d4-b5dd-d5393e015009    
 
-💡 Use this ID with: mdu comicinfo generate --mangadex-id a1c7c817-4e59-43b7-9365-09675a149a6f --dir <path>
+Other Top Matches:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Name                                     Alt Name                                 Mangadex ID                             
+---------------------------------------- ---------------------------------------- ----------------------------------------
+One Piece (Official Colored)             Ван Пис                                  a2c1d849-af05-4bbc-b2a7-866ebb10331f    
+ONE PIECE STRONG WORLD                   One Piece: Strong World                  fcb5111f-be88-4f5a-b456-22135f3eda49    
+Dragon Ball X One Piece - Cross Epoch    Época Cruzada                            6c6236b0-0fd7-4926-8a1a-cc346a6627e3    
+One Piece: Ace’s Story—The Manga         One Piece Episode Ace                    470ac1ec-c3dd-4dc2-9e5d-0104600ed1a5    
+ONE PIECE                                ワンピース                               a1c7c817-4e59-43b7-9365-09675a149a6f    
+One Piece Academy                        ONE PIECE学園                            b70113a5-32a3-44e8-a28f-0e88392808ba    
+One Piece (Fan Colored)                  -                                        c2e76d62-702b-4a8e-a4d0-c7cecd45b8ea    
+One Piece Romance Dawn V.1               ROMANCE DAWN - ロマンス ドーン           fc4eccf5-5fe6-49de-b12c-4124fcea4e16    
+One Piece - Vivi no Bouken               ビビの冒険                               7bd37661-c0b1-4166-87c1-7e633adb55ac    
+
+💡 Use this ID with: mdu comicinfo generate --mangadex-id a0b49136-9f4d-46d4-b5dd-d5393e015009 --dir <path>
 ```
 
 **How Search Works:**
