@@ -626,10 +626,9 @@ The search uses English titles only and performs fuzzy matching to find the clos
 				return nil
 			}
 
-			// Extract all the returned titles
-			searchResults := parser.ExtractEnglishTitles(mdTitles)
-
-			// Score all results and sort them
+			// Score all results and sort them. Use the result's main title
+			// or first alt title (if main is missing) for scoring so titles
+			// remain aligned with their Mangadex entries.
 			type scoredResult struct {
 				result mangasrc.MangadexTitleSearchResponse
 				title  string
@@ -637,11 +636,17 @@ The search uses English titles only and performs fuzzy matching to find the clos
 			}
 
 			scoredResults := make([]scoredResult, 0, len(mdTitles))
-			for i, result := range mdTitles {
-				score := parser.ScoreTitleTokens(title, searchResults[i])
+			for _, result := range mdTitles {
+				// choose the best candidate title for this entry
+				candidate := result.MainTitle
+				if candidate == "" && len(result.AltTitles) > 0 {
+					candidate = result.AltTitles[0]
+				}
+
+				score := parser.ScoreTitleTokens(title, candidate)
 				scoredResults = append(scoredResults, scoredResult{
 					result: result,
-					title:  searchResults[i],
+					title:  candidate,
 					score:  score,
 				})
 			}
