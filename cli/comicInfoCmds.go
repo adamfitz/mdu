@@ -699,14 +699,21 @@ The search uses English titles only and performs fuzzy matching to find the clos
 					remainingCount = 9
 				}
 
-				var remainingMatches []mangasrc.MangadexTitleSearchResponse
-				for i := 1; i <= remainingCount; i++ {
-					remainingMatches = append(remainingMatches, scoredResults[i].result)
-				}
-
 				fmt.Printf("\nOther Top Matches:\n")
 				fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-				printResults(remainingMatches)
+
+				if showURL {
+					// Print one row at a time so the URL appears directly under its entry
+					for i := 1; i <= remainingCount; i++ {
+						printResults([]mangasrc.MangadexTitleSearchResponse{scoredResults[i].result})
+					}
+				} else {
+					var remainingMatches []mangasrc.MangadexTitleSearchResponse
+					for i := 1; i <= remainingCount; i++ {
+						remainingMatches = append(remainingMatches, scoredResults[i].result)
+					}
+					printResults(remainingMatches)
+				}
 			}
 
 			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", bestMatchResult.ID)
