@@ -598,6 +598,8 @@ This command:
 
 // newComicInfoSearchCmd creates the 'comicinfo search' command
 func newComicInfoSearchCmd() *cobra.Command {
+	var showURL bool
+
 	cmd := &cobra.Command{
 		Use:   "search <title>",
 		Short: "Search MangaDex for a manga title and return the best match",
@@ -637,17 +639,32 @@ The search uses English titles only and performs fuzzy matching to find the clos
 
 			scoredResults := make([]scoredResult, 0, len(mdTitles))
 			for _, result := range mdTitles {
-				// choose the best candidate title for this entry
-				candidate := result.MainTitle
-				if candidate == "" && len(result.AltTitles) > 0 {
-					candidate = result.AltTitles[0]
+				// Score against the main title AND every alt title; keep the best score.
+				// This ensures a match like "The Last Human" in altTitles beats a weak
+				// main-title match from a different entry.
+				allCandidates := make([]string, 0, 1+len(result.AltTitles))
+				if result.MainTitle != "" {
+					allCandidates = append(allCandidates, result.MainTitle)
+				}
+				allCandidates = append(allCandidates, result.AltTitles...)
+				if len(allCandidates) == 0 {
+					allCandidates = []string{""}
 				}
 
-				score := parser.ScoreTitleTokens(title, candidate)
+				bestScore := 0.0
+				bestCandidate := result.MainTitle
+				for _, candidate := range allCandidates {
+					s := parser.ScoreTitleTokens(title, candidate)
+					if s > bestScore {
+						bestScore = s
+						bestCandidate = candidate
+					}
+				}
+
 				scoredResults = append(scoredResults, scoredResult{
 					result: result,
-					title:  candidate,
-					score:  score,
+					title:  bestCandidate,
+					score:  bestScore,
 				})
 			}
 
@@ -656,13 +673,24 @@ The search uses English titles only and performs fuzzy matching to find the clos
 				return scoredResults[i].score > scoredResults[j].score
 			})
 
+			// printResults prints a result table and, when --url is set,
+			// an indented URL line beneath each entry.
+			printResults := func(results []mangasrc.MangadexTitleSearchResponse) {
+				parser.PrintTitleSearchResults(results)
+				if showURL {
+					for _, r := range results {
+						fmt.Printf("  🔗 https://mangadex.org/title/%s\n", r.ID)
+					}
+				}
+			}
+
 			// Print best match
 			bestMatchResult := &scoredResults[0].result
 			bestMatchScore := scoredResults[0].score
 
 			fmt.Printf("Best Match (Score: %.2f):\n", bestMatchScore)
 			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-			parser.PrintTitleSearchResults([]mangasrc.MangadexTitleSearchResponse{*bestMatchResult})
+			printResults([]mangasrc.MangadexTitleSearchResponse{*bestMatchResult})
 
 			// Print remaining top matches (up to 9 more)
 			if len(scoredResults) > 1 {
@@ -671,14 +699,21 @@ The search uses English titles only and performs fuzzy matching to find the clos
 					remainingCount = 9
 				}
 
-				var remainingMatches []mangasrc.MangadexTitleSearchResponse
-				for i := 1; i <= remainingCount; i++ {
-					remainingMatches = append(remainingMatches, scoredResults[i].result)
-				}
-
 				fmt.Printf("\nOther Top Matches:\n")
 				fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-				parser.PrintTitleSearchResults(remainingMatches)
+
+				if showURL {
+					// Print one row at a time so the URL appears directly under its entry
+					for i := 1; i <= remainingCount; i++ {
+						printResults([]mangasrc.MangadexTitleSearchResponse{scoredResults[i].result})
+					}
+				} else {
+					var remainingMatches []mangasrc.MangadexTitleSearchResponse
+					for i := 1; i <= remainingCount; i++ {
+						remainingMatches = append(remainingMatches, scoredResults[i].result)
+					}
+					printResults(remainingMatches)
+				}
 			}
 
 			fmt.Printf("\n💡 Use this ID with: mdu comicinfo generate --mangadex-id %s --dir <path>\n", bestMatchResult.ID)
@@ -686,6 +721,8 @@ The search uses English titles only and performs fuzzy matching to find the clos
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&showURL, "url", false, "Include MangaDex URL in output")
 
 	return cmd
 }
