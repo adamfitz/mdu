@@ -868,8 +868,8 @@ func resolveFilePath(path string) (string, error) {
 
 // processChapterWithIntegrity processes a CBZ file with integrity validation and retry logic.
 // coverImageBytes and coverFilename are optional — pass nil/empty to skip cover injection.
-// When provided, the cover is written as "000_cover.<ext>" so it sorts first in the archive,
-// and a <Pages> block is added to ComicInfo marking it as FrontCover for Kavita.
+// When provided, the cover is written as "cover.jpg", and a <Pages> block is added
+// to ComicInfo marking it as FrontCover for Kavita.
 func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo, coverImageBytes []byte, coverFilename string) error {
 	fileName := filepath.Base(cbzPath)
 	chapterName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
@@ -894,19 +894,15 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo, co
 		return fmt.Errorf("failed to extract CBZ: %w", err)
 	}
 
-	// Inject cover image as "000_cover.<ext>" so it sorts before all chapter pages.
+	// Inject cover image as "cover.jpg".
 	// Also annotate ComicInfo with a Pages block so Kavita recognises it as FrontCover.
-	if len(coverImageBytes) > 0 && coverFilename != "" {
-		coverExt := strings.ToLower(filepath.Ext(coverFilename)) // e.g. ".jpg"
-		if coverExt == "" {
-			coverExt = ".jpg"
-		}
-		coverDest := filepath.Join(tempDir, "000_cover"+coverExt)
+	if len(coverImageBytes) > 0 {
+		coverDest := filepath.Join(tempDir, "cover.jpg")
 		if err := os.WriteFile(coverDest, coverImageBytes, 0644); err != nil {
 			// Non-fatal: log and continue without cover rather than aborting the whole file
 			log.Printf("  ⚠️  Could not write cover image to temp dir: %v", err)
 		} else {
-			fmt.Printf("  🖼️  Cover image written: 000_cover%s\n", coverExt)
+			fmt.Printf("  🖼️  Cover image written: cover.jpg\n")
 			// Mark page 0 as FrontCover in ComicInfo so Kavita uses it as the series cover
 			comicInfo.Pages = &parser.ComicPageList{
 				Pages: []parser.ComicPageInfo{
@@ -983,7 +979,7 @@ func extractCBZ(cbzPath, destDir string) error {
 	for _, f := range r.File {
 		// Skip ComicInfo.xml — we write a fresh one
 		// Skip any existing cover file — we inject a fresh one from MangaDex
-		if f.Name == "ComicInfo.xml" || strings.HasPrefix(f.Name, "000_cover.") {
+		if f.Name == "ComicInfo.xml" || strings.HasPrefix(f.Name, "000_cover.") || f.Name == "cover.jpg" {
 			continue
 		}
 
