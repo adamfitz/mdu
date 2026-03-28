@@ -510,7 +510,27 @@ This command:
 
 			fmt.Println("✓ Metadata converted to ComicInfo format")
 
-			// Step 3: Get all CBZ files to process
+			// Step 3: Fetch cover image once for the entire run.
+			// The cover filename is embedded in the metadata response (via includes[]=cover_art)
+			// so no extra API call is needed. The same image bytes are reused for every CBZ.
+			var coverImageBytes []byte
+			var coverFilename string
+			if coverFile := mangasrc.ExtractCoverFilename(mangadexMetadata); coverFile != "" {
+				coverFilename = coverFile
+				coverURL := mangasrc.CoverImageURL(mangadexID, coverFile, ".512.jpg")
+				fmt.Printf("🖼️  Fetching cover image...\n")
+				data, err := mangasrc.DownloadCoverImage(coverURL)
+				if err != nil {
+					log.Printf("⚠️  Warning: Could not download cover image: %v (continuing without cover)", err)
+				} else {
+					coverImageBytes = data
+					fmt.Printf("✓ Cover image fetched (%d KB)\n", len(data)/1024)
+				}
+			} else {
+				fmt.Printf("⚠️  No cover image found in MangaDex metadata, continuing without cover\n")
+			}
+
+			// Step 4: Get all CBZ files to process
 			allFiles, err := resolveCBZFiles(file, dir)
 			if err != nil {
 				return fmt.Errorf("failed to resolve CBZ files: %w", err)
@@ -522,7 +542,7 @@ This command:
 
 			fmt.Printf("\n📚 Processing %d file(s)...\n\n", len(allFiles))
 
-			// Step 4: Process each file
+			// Step 5: Process each file
 			successCount := 0
 			skippedCount := 0
 			failedCount := 0
@@ -546,8 +566,9 @@ This command:
 				chapterComicInfo.Number = chapterNum
 				chapterComicInfo.Title = fmt.Sprintf("Chapter %s", chapterNum)
 
-				// Process this chapter with integrity validation
-				if err := processChapterWithIntegrity(cbzPath, &chapterComicInfo); err != nil {
+				// Process this chapter with integrity validation.
+				// coverImageBytes and coverFilename are shared across all files — downloaded once above.
+				if err := processChapterWithIntegrity(cbzPath, &chapterComicInfo, coverImageBytes, coverFilename); err != nil {
 					log.Printf("✗ Error processing %s: %v\n\n", fileName, err)
 					failedCount++
 					continue
@@ -845,8 +866,11 @@ func resolveFilePath(path string) (string, error) {
 	return filepath.Join(cwd, path), nil
 }
 
-// processChapterWithIntegrity processes a CBZ file with integrity validation and retry logic
-func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) error {
+// processChapterWithIntegrity processes a CBZ file with integrity validation and retry logic.
+// coverImageBytes and coverFilename are optional — pass nil/empty to skip cover injection.
+// When provided, the cover is written as "000_cover.<ext>" so it sorts first in the archive,
+// and a <Pages> block is added to ComicInfo marking it as FrontCover for Kavita.
+func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo, coverImageBytes []byte, coverFilename string) error {
 	fileName := filepath.Base(cbzPath)
 	chapterName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 
@@ -868,6 +892,28 @@ func processChapterWithIntegrity(cbzPath string, comicInfo *parser.ComicInfo) er
 	fmt.Printf("  📦 Extracting CBZ contents...\n")
 	if err := extractCBZ(absCBZPath, tempDir); err != nil {
 		return fmt.Errorf("failed to extract CBZ: %w", err)
+	}
+
+	// Inject cover image as "000_cover.<ext>" so it sorts before all chapter pages.
+	// Also annotate ComicInfo with a Pages block so Kavita recognises it as FrontCover.
+	if len(coverImageBytes) > 0 && coverFilename != "" {
+		coverExt := strings.ToLower(filepath.Ext(coverFilename)) // e.g. ".jpg"
+		if coverExt == "" {
+			coverExt = ".jpg"
+		}
+		coverDest := filepath.Join(tempDir, "000_cover"+coverExt)
+		if err := os.WriteFile(coverDest, coverImageBytes, 0644); err != nil {
+			// Non-fatal: log and continue without cover rather than aborting the whole file
+			log.Printf("  ⚠️  Could not write cover image to temp dir: %v", err)
+		} else {
+			fmt.Printf("  🖼️  Cover image written: 000_cover%s\n", coverExt)
+			// Mark page 0 as FrontCover in ComicInfo so Kavita uses it as the series cover
+			comicInfo.Pages = &parser.ComicPageList{
+				Pages: []parser.ComicPageInfo{
+					{Image: 0, Type: "FrontCover"},
+				},
+			}
+		}
 	}
 
 	// Write ComicInfo.xml to temp directory
@@ -935,8 +981,9 @@ func extractCBZ(cbzPath, destDir string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		// Skip ComicInfo.xml if it already exists (we'll write a new one)
-		if f.Name == "ComicInfo.xml" {
+		// Skip ComicInfo.xml — we write a fresh one
+		// Skip any existing cover file — we inject a fresh one from MangaDex
+		if f.Name == "ComicInfo.xml" || strings.HasPrefix(f.Name, "000_cover.") {
 			continue
 		}
 

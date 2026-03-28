@@ -31,15 +31,17 @@ type MangadexTitleSearchResponse struct {
 	AltTitles []string `json:"altTitles"`
 }
 
-// Function to search for a manga by name (title) and return the full metadata
+// TitleMetadata fetches full manga metadata from MangaDex.
+// Requests cover_art relationship expansion so the cover filename is included
+// in the response without needing a separate API call.
 func TitleMetadata(mangadexId string) (*MangadexTitleMetadata, error) {
 	if mangadexId == "" {
 		return nil, fmt.Errorf("manga ID is empty")
 	}
 
-	url := fmt.Sprintf("%s/manga/%s", mangadexApiBaseUri, mangadexId)
+	reqURL := fmt.Sprintf("%s/manga/%s?includes[]=cover_art", mangadexApiBaseUri, mangadexId)
 
-	res, err := http.Get(url)
+	res, err := http.Get(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -59,6 +61,58 @@ func TitleMetadata(mangadexId string) (*MangadexTitleMetadata, error) {
 	}
 
 	return &wrapper.Data, nil
+}
+
+// ExtractCoverFilename walks the relationships returned by TitleMetadata (with
+// includes[]=cover_art) and returns the cover image filename, e.g. "abc.jpg".
+// Returns an empty string if no cover_art relationship is present.
+func ExtractCoverFilename(md *MangadexTitleMetadata) string {
+	for _, rel := range md.Relationships {
+		relMap, ok := rel.(map[string]any)
+		if !ok {
+			continue
+		}
+		if relMap["type"] != "cover_art" {
+			continue
+		}
+		attrs, ok := relMap["attributes"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if filename, ok := attrs["fileName"].(string); ok && filename != "" {
+			return filename
+		}
+	}
+	return ""
+}
+
+// CoverImageURL constructs the MangaDex CDN URL for a cover image.
+// mangadexID is the manga UUID, filename is from ExtractCoverFilename.
+// quality is ".512.jpg" for 512px thumbnail, ".256.jpg" for 256px, or "" for original.
+func CoverImageURL(mangadexID, filename, quality string) string {
+	return fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s%s", mangadexID, filename, quality)
+}
+
+// DownloadCoverImage fetches the cover image from the given URL and returns the
+// raw bytes. The caller is responsible for determining the file extension from
+// the original filename.
+func DownloadCoverImage(coverURL string) ([]byte, error) {
+	res, err := http.Get(coverURL)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("bad status %d fetching cover image", res.StatusCode)
+	}
+
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading cover image body: %w", err)
+	}
+
+	return data, nil
 }
 
 // Search manga titles from mangadex, should be passed to another func to determine the best match
