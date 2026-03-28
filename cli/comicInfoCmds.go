@@ -542,11 +542,16 @@ This command:
 
 			fmt.Printf("\n📚 Processing %d file(s)...\n\n", len(allFiles))
 
-			// Step 5: Process each file
+			// Step 5: Process each file and collect simple status results
 			successCount := 0
 			skippedCount := 0
 			failedCount := 0
-			var outputStr string
+
+			type procResult struct {
+				Name   string
+				Status string
+			}
+			var resultsList []procResult
 
 			for i, cbzPath := range allFiles {
 				fileName := filepath.Base(cbzPath)
@@ -557,6 +562,7 @@ This command:
 				if chapterNum == "" {
 					log.Printf("⚠️  Could not extract chapter number from '%s', skipping\n\n", fileName)
 					skippedCount++
+					resultsList = append(resultsList, procResult{fileName, "Skipped"})
 					continue
 				}
 				fmt.Printf("  📄 Extracted chapter number: %s\n", chapterNum)
@@ -567,39 +573,58 @@ This command:
 				chapterComicInfo.Title = fmt.Sprintf("Chapter %s", chapterNum)
 
 				// Process this chapter with integrity validation.
-				// coverImageBytes and coverFilename are shared across all files — downloaded once above.
 				if err := processChapterWithIntegrity(cbzPath, &chapterComicInfo, coverImageBytes, coverFilename); err != nil {
 					log.Printf("✗ Error processing %s: %v\n\n", fileName, err)
 					failedCount++
+					resultsList = append(resultsList, procResult{fileName, "Failed"})
 					continue
 				}
 
-				// Read back the metadata for output
-				md, err := metadata.ReadComicInfo(cbzPath)
-				if err != nil {
-					log.Printf("⚠️  Processed %s but couldn't read metadata: %v\n", fileName, err)
-				} else {
-					outputStr += parser.RenderComicInfo(md, fileName)
-				}
-
+				// Mark success and record concise result (no full metadata output)
 				fmt.Printf("✓ Successfully processed: %s\n\n", fileName)
 				successCount++
+				resultsList = append(resultsList, procResult{fileName, "Success"})
 			}
 
-			// Final summary
-			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-			fmt.Printf("✓ Successfully processed: %d\n", successCount)
+			// Final concise summary: two columns (file, status)
+			var summary strings.Builder
+			summary.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+			summary.WriteString(fmt.Sprintf("✓ Successfully processed: %d\n", successCount))
 			if skippedCount > 0 {
-				fmt.Printf("⚠️  Skipped (no chapter number): %d\n", skippedCount)
+				summary.WriteString(fmt.Sprintf("⚠️  Skipped (no chapter number): %d\n", skippedCount))
 			}
 			if failedCount > 0 {
-				fmt.Printf("✗ Failed: %d\n", failedCount)
+				summary.WriteString(fmt.Sprintf("✗ Failed: %d\n", failedCount))
 			}
-			fmt.Printf("Total files: %d\n\n", len(allFiles))
-			fmt.Print(outputStr)
+			summary.WriteString(fmt.Sprintf("Total files: %d\n\n", len(allFiles)))
+
+			// Four-column table (each column 20 chars wide): File Status File Status
+			short := func(s string) string {
+				if len(s) <= 20 {
+					return s
+				}
+				return s[:17] + "..."
+			}
+
+			summary.WriteString(fmt.Sprintf("%-20s %-20s %-20s %-20s\n", "File", "Status", "File", "Status"))
+			summary.WriteString(fmt.Sprintf("%-20s %-20s %-20s %-20s\n", strings.Repeat("-", 20), strings.Repeat("-", 20), strings.Repeat("-", 20), strings.Repeat("-", 20)))
+
+			for i := 0; i < len(resultsList); i += 2 {
+				a := resultsList[i]
+				var bName, bStatus string
+				if i+1 < len(resultsList) {
+					b := resultsList[i+1]
+					bName = short(b.Name)
+					bStatus = b.Status
+				}
+				summary.WriteString(fmt.Sprintf("%-20s %-20s %-20s %-20s\n", short(a.Name), a.Status, bName, bStatus))
+			}
+
+			// Print to stdout
+			fmt.Print(summary.String())
 
 			if output != "" {
-				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
+				if err := os.WriteFile(output, []byte(summary.String()), 0644); err != nil {
 					return fmt.Errorf("failed to write output file: %w", err)
 				}
 				fmt.Printf("✓ Results written to %s\n", output)
