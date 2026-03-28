@@ -58,12 +58,25 @@ type ComicInfo struct {
 	BlackAndWhite string `xml:"BlackAndWhite,omitempty"`
 
 	// Pages
-	PageCount int `xml:"PageCount,omitempty"`
+	PageCount int            `xml:"PageCount,omitempty"`
+	Pages     *ComicPageList `xml:"Pages,omitempty"`
 
 	// Additional
 	SeriesGroup     string `xml:"SeriesGroup,omitempty"`
 	StoryArc        string `xml:"StoryArc,omitempty"`
 	ScanInformation string `xml:"ScanInformation,omitempty"`
+}
+
+// ComicPageInfo represents a single page entry in the ComicInfo Pages block.
+// Kavita uses Type="FrontCover" on page 0 to identify the cover image.
+type ComicPageInfo struct {
+	Image int    `xml:"Image,attr"`
+	Type  string `xml:"Type,attr,omitempty"`
+}
+
+// ComicPageList is the container element for the Pages block in ComicInfo.xml.
+type ComicPageList struct {
+	Pages []ComicPageInfo `xml:"Page"`
 }
 
 // MangaDexTitleMetadata represents MangaDex API response
