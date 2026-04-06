@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"mdu/ranobedb"
 
 	"github.com/beevik/etree"
 )
@@ -63,7 +66,7 @@ func Read(epubPath string, all bool) (map[string]string, error) {
 }
 
 // Update modifies metadata in an EPUB file
-func Update(epubPath, outputPath string, updates map[string]string) error {
+func Update(epubPath string, outputPath string, updates map[string]string) error {
 	r, err := zip.OpenReader(epubPath)
 	if err != nil {
 		return fmt.Errorf("failed to open EPUB: %w", err)
@@ -86,9 +89,29 @@ func Update(epubPath, outputPath string, updates map[string]string) error {
 		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
-	// Create new EPUB with modified OPF
-	if err := writeModifiedEPUB(r, opfPath, modifiedOPF, outputPath); err != nil {
+	// If no explicit outputPath is given, overwrite in-place
+	if outputPath == "" {
+		outputPath = epubPath
+	}
+
+	// Write to temp file first
+	tmpFile, err := os.CreateTemp(filepath.Dir(epubPath), "*.epub.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close() // We'll write to it via zip writer
+
+	// Write EPUB with modified OPF into temp file
+	if err := writeModifiedEPUB(r, opfPath, modifiedOPF, tmpPath); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write modified EPUB: %w", err)
+	}
+
+	// Atomic rename over original
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to overwrite original EPUB: %w", err)
 	}
 
 	return nil
@@ -186,6 +209,23 @@ func parseMetadataFromOPF(opfContent []byte, all bool) (map[string]string, error
 			if t.Name.Local == "metadata" {
 				inMetadata = true
 			} else if inMetadata {
+				// ✅ FIX: handle self-closing <meta name="x" content="y"/>
+				if t.Name.Local == "meta" {
+					var name, value string
+					for _, attr := range t.Attr {
+						switch attr.Name.Local {
+						case "name":
+							name = attr.Value
+						case "content":
+							value = attr.Value
+						}
+					}
+					if name != "" && value != "" {
+						result[name] = value
+						continue // skip normal CharData handling
+					}
+				}
+
 				currentElement = t.Name.Local
 				currentAttrs = t.Attr
 				content.Reset()
@@ -345,18 +385,20 @@ func updateMetadataField(metadata, key, value string) string {
 // findAndUpdateTag safely updates or adds an EPUB metadata tag, removes editor <creator> tags,
 // and ensures the corresponding Kavita tag is also updated.
 func findAndUpdateTag(metadata, localName, value string) string {
-	// Parse the XML
+	// Fix malformed self-closing tags left by previous runs, e.g.:
+	// <description/>some text</description> -> <description>some text</description>
+	metadata = fixMalformedSelfClosingTags(metadata)
+	wrapped := `<root xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">` + metadata + `</root>`
+
 	doc := etree.NewDocument()
-	if err := doc.ReadFromString(metadata); err != nil {
-		// if parsing fails, fallback to original metadata
-		fmt.Println("Warning: failed to parse metadata, returning original")
+	if err := doc.ReadFromString(wrapped); err != nil {
+		fmt.Printf("Warning: failed to parse metadata: %v\n", err)
+		fmt.Printf("DEBUG wrapped: %s\n", wrapped) // print full wrapped string
 		return metadata
 	}
 
-	// Get <metadata> element
 	metaEl := doc.FindElement("//metadata")
 	if metaEl == nil {
-		// fallback
 		return metadata
 	}
 
@@ -385,20 +427,24 @@ func findAndUpdateTag(metadata, localName, value string) string {
 	}
 
 	if existing != nil {
-		// Update existing tag
 		existing.SetText(value)
 	} else {
-		// Add new tag with dc: prefix
 		tagName := "dc:" + localName
 		newEl := etree.NewElement(tagName)
 		newEl.SetText(value)
 		metaEl.AddChild(newEl)
 	}
 
-	// Update corresponding Kavita tag (plain tag without namespace)
+	// Serialize and strip the <root> wrapper
 	metadataStr, _ := doc.WriteToString()
-	metadataStr = updateOrAddKavitaTag(metadataStr, localName, value)
+	startIdx := strings.Index(metadataStr, "<metadata")
+	endIdx := strings.LastIndex(metadataStr, "</metadata>")
+	if startIdx == -1 || endIdx == -1 {
+		return metadata
+	}
+	metadataStr = metadataStr[startIdx : endIdx+len("</metadata>")]
 
+	metadataStr = updateOrAddKavitaTag(metadataStr, localName, value)
 	return metadataStr
 }
 
@@ -418,19 +464,34 @@ func extractTagName(openingTag string) string {
 
 // updateOrAddKavitaTag updates or adds Kavita-specific tags (like Summary)
 func updateOrAddKavitaTag(metadata, tagName, value string) string {
-	// Kavita tags are just plain tags without namespace
 	searchPattern := "<" + tagName
-	idx := strings.Index(metadata, searchPattern)
 
+	// First, fix any existing malformed pattern: <tag/>content</tag>
+	// by removing the whole thing so we can re-add it cleanly
+	selfClose := searchPattern + "/>"
+	scIdx := strings.Index(metadata, selfClose)
+	if scIdx != -1 {
+		closeTag := "</" + tagName + ">"
+		closeIdx := strings.Index(metadata[scIdx:], closeTag)
+		if closeIdx != -1 {
+			closeIdx += scIdx
+			// Remove from self-close to end of closing tag
+			metadata = metadata[:scIdx] + metadata[closeIdx+len(closeTag):]
+		} else {
+			// Just remove the self-closing tag
+			metadata = metadata[:scIdx] + metadata[scIdx+len(selfClose):]
+		}
+	}
+
+	// Now do normal update-or-add
+	idx := strings.Index(metadata, searchPattern)
 	if idx != -1 {
-		// Find end of opening tag
 		endOfOpen := strings.Index(metadata[idx:], ">")
 		if endOfOpen == -1 {
 			goto addNew
 		}
 		endOfOpen += idx
 
-		// Find closing tag
 		closeTag := "</" + tagName + ">"
 		closeIdx := strings.Index(metadata[endOfOpen:], closeTag)
 		if closeIdx == -1 {
@@ -438,14 +499,12 @@ func updateOrAddKavitaTag(metadata, tagName, value string) string {
 		}
 		closeIdx += endOfOpen
 
-		// Replace content
 		before := metadata[:endOfOpen+1]
 		after := metadata[closeIdx:]
 		return before + value + after
 	}
 
 addNew:
-	// Add new tag
 	closeMetadata := strings.Index(metadata, "</metadata>")
 	if closeMetadata == -1 {
 		return metadata
@@ -707,4 +766,117 @@ func sortMap(m map[string]string) map[string]string {
 		sorted[k] = m[k]
 	}
 	return sorted
+}
+
+// BuildMetadataMapFromNovel converts a ranobedb.NovelInfo into an EPUB-ready map[string]string
+func BuildMetadataMap(novel ranobedb.NovelInfo) map[string]string {
+	m := make(map[string]string)
+
+	m["title"] = novel.Title
+
+	// Authors: join multiple authors into a single string
+	if len(novel.Authors) > 0 {
+		m["author"] = strings.Join(novel.Authors, ", ")
+	} else {
+		m["author"] = "Unknown"
+	}
+
+	// Description → summary
+	m["summary"] = novel.Description
+
+	// Publisher
+	if novel.Publisher != "" {
+		m["publisher"] = novel.Publisher
+	}
+
+	// Genres → subject
+	if len(novel.Genres) > 0 {
+		m["subject"] = strings.Join(novel.Genres, ", ")
+	}
+
+	// Calibre/Kavita metadata
+	m["calibre:series"] = novel.Title                            // series name
+	m["calibre:series_index"] = fmt.Sprintf("%d", novel.Volumes) // volume count
+
+	return m
+}
+
+// WriteOPFToFile updates an EPUB's OPF metadata and writes it back to the same file.
+func WriteOPFToFile(epubPath string, opf map[string]string, outputPath string) error {
+	// open EPUB, update metadata, write to outputPath
+	// your existing implementation
+	return Update(epubPath, outputPath, opf)
+}
+
+// WriteOPFToDir applies the given OPF metadata to all EPUB files in a directory
+func WriteOPFToDir(dirPath string, opf map[string]string) error {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".epub" {
+			continue
+		}
+
+		inputFile := filepath.Join(dirPath, entry.Name())
+
+		// in-place update
+		if err := WriteOPFToFile(inputFile, opf, ""); err != nil {
+			return fmt.Errorf("failed to write EPUB '%s': %w", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+func fixMalformedSelfClosingTags(metadata string) string {
+	// Matches patterns like: <foo/>content</foo>
+	// and replaces with:     <foo>content</foo>
+	for {
+		// Find a self-closing tag
+		scIdx := strings.Index(metadata, "/>")
+		if scIdx == -1 {
+			break
+		}
+
+		// Find the tag name by walking back to
+		openIdx := strings.LastIndex(metadata[:scIdx], "<")
+		if openIdx == -1 {
+			break
+		}
+
+		tagPart := metadata[openIdx+1 : scIdx]
+		// Get just the tag name (before any space/attrs)
+		tagName := strings.Fields(tagPart)
+		if len(tagName) == 0 {
+			break
+		}
+		name := tagName[0]
+
+		closeTag := "</" + name + ">"
+		closeIdx := strings.Index(metadata[scIdx:], closeTag)
+		if closeIdx == -1 {
+			break
+		}
+		closeIdx += scIdx
+
+		// Content between /> and </name>
+		content := metadata[scIdx+2 : closeIdx]
+
+		if strings.TrimSpace(content) != "" {
+			// Replace <name .../>content</name> with <name ...>content</name>
+			before := metadata[:openIdx]
+			attrs := ""
+			if len(tagName) > 1 {
+				attrs = " " + strings.Join(tagName[1:], " ")
+			}
+			after := metadata[closeIdx+len(closeTag):]
+			metadata = before + "<" + name + attrs + ">" + content + closeTag + after
+		} else {
+			break
+		}
+	}
+	return metadata
 }
