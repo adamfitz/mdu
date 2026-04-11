@@ -23,6 +23,17 @@ Perfect for organizing your ebook and manga library with media management tools 
 * ✓ **Metadata Validation** - Verify ComicInfo.xml structure and content
 * 🎯 **Smart Chapter Extraction** - Automatic chapter number detection from filenames
 * 🛡️ **Integrity Validation** - Internal SHA256 verification during repackaging (with automatic retry)
+* 🖼️ **Cover Art Download** - Automatically download and embed manga cover images from MangaDex
+
+### Light Novel Support
+* 📚 **RanobeDB Integration** - Search and fetch metadata for light novels from RanobeDB
+* 🔍 **Smart Search** - Find light novel titles with intelligent matching
+* ✏️ **EPUB Metadata Update** - Apply light novel metadata to EPUB files
+* 🌐 **Multi-language Support** - Handles Romaji, Japanese, and English titles/authors
+* 📖 **Rich Metadata** - Includes authors, publishers, genres, descriptions, and volume information
+
+### PDF Support (Coming Soon)
+* Planned support for PDF metadata management
 
 ## Installation
 
@@ -83,6 +94,15 @@ mdu epub read --file book.epub
 
 # Update metadata
 mdu epub update --file book.epub --author "Author Name" --series "Series Name" --series-index "1"
+```
+
+### Light Novels
+```bash
+# Search for light novels on RanobeDB
+mdu epub ranobe-search "Overlord"
+
+# Update EPUB with light novel metadata
+mdu epub update --file novel.epub --ranobe-id "12345"
 ```
 
 ### CBZ Files
