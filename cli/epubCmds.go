@@ -5,19 +5,23 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
 	"mdu/metadata"
 	"mdu/parser"
+	"mdu/ranobedb"
 )
 
 func NewEPUBCmd() *cobra.Command {
 	epubCmd := &cobra.Command{
 		Use:   "epub",
 		Short: "EPUB metadata operations",
-		Long:  `Read, update, and validate EPUB file metadata.`,
+		Long:  `Read, update, search and validate EPUB file metadata.`,
 	}
 
 	epubCmd.AddCommand(
@@ -26,6 +30,8 @@ func NewEPUBCmd() *cobra.Command {
 		newEPUBCompareCmd(),
 		newEPUBValidateCmd(),
 		newEPUBCheckCmd(),
+		newRanobeSearchCmd(),
+		newEpubGenerateCmd(),
 	)
 
 	return epubCmd
@@ -38,38 +44,28 @@ func newEPUBReadCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "read",
 		Short: "Read metadata from EPUB files",
-		Long: `Read and display metadata from EPUB files.
-Use --all to see all metadata fields, not just supported ones.`,
-		Example: `  mdu epub read --file book.epub
-  mdu epub read --dir ./books --all
-  mdu epub read --file book.epub --output metadata.txt`,
-		Run: func(cmd *cobra.Command, args []string) {
+		Long:  `Read and display metadata from EPUB files.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if listFields {
 				fmt.Println("Supported EPUB metadata fields (Kavita-compatible):")
-				fmt.Println("  author           - Book author (dc:creator)")
-				fmt.Println("  summary          - Book description (dc:description + Summary)")
-				fmt.Println("  publisher        - Publisher name (dc:publisher)")
-				fmt.Println("  isbn             - ISBN identifier (dc:identifier with scheme)")
-				fmt.Println("  calibre:series   - Series name (Kavita: Name)")
-				fmt.Println("  calibre:series_index - Series position (Kavita: Volume)")
-				fmt.Println("  subject          - Genres (dc:subject)")
-				return
+				fmt.Println("  author, summary, publisher, isbn, calibre:series, calibre:series_index, subject")
+				return nil
 			}
 
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				return fmt.Errorf("you must specify either --file or --dir")
 			}
 
 			allFiles, err := getEPUBFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting EPUB files: %v", err)
+				return fmt.Errorf("getting EPUB files: %w", err)
 			}
 
 			var outputStr string
 			for _, f := range allFiles {
 				md, err := metadata.Read(f, all)
 				if err != nil {
-					log.Printf("Error reading %s: %v", f, err)
+					fmt.Printf("Error reading %s: %v\n", f, err)
 					continue
 				}
 				outputStr += parser.RenderMetadataWithHeader(filepath.Base(f), md)
@@ -79,15 +75,17 @@ Use --all to see all metadata fields, not just supported ones.`,
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("writing output file: %w", err)
 				}
 				fmt.Printf("\n✓ Metadata written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
-	cmd.Flags().StringVar(&dir, "dir", "", "Target directory containing EPUB files")
+	cmd.Flags().StringVar(&dir, "dir", "", "Target directory")
 	cmd.Flags().BoolVar(&listFields, "list-fields", false, "List all supported metadata fields")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "Show all metadata fields")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write output to file")
@@ -103,18 +101,9 @@ func newEPUBUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update metadata in EPUB files",
-		Long: `Update metadata in EPUB files while preserving the original OPF structure.
-Creates backups by default unless --no-backup is specified.
-
-You can specify metadata using either:
-  1. Command-line flags (--author, --series, etc.)
-  2. An input file (--input) in JSON or YAML format`,
-		Example: `  mdu epub update --file book.epub --author "John Doe" --series "My Series"
-  mdu epub update --dir ./books --input metadata.json
-  mdu epub update --file book.epub --isbn "978-1234567890" --no-backup`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				return fmt.Errorf("you must specify either --file or --dir")
 			}
 
 			var updates map[string]string
@@ -123,7 +112,7 @@ You can specify metadata using either:
 			if inputFile != "" {
 				updates, err = parser.ParseInputFile(inputFile)
 				if err != nil {
-					log.Fatalf("Error parsing input file: %v", err)
+					return fmt.Errorf("parsing input file: %w", err)
 				}
 				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
 			} else {
@@ -131,71 +120,47 @@ You can specify metadata using either:
 			}
 
 			if len(updates) == 0 {
-				log.Fatal("Error: No metadata fields specified for update")
+				return fmt.Errorf("no metadata fields specified for update")
 			}
 
 			allFiles, err := getEPUBFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting EPUB files: %v", err)
+				return fmt.Errorf("getting EPUB files: %w", err)
 			}
 
-			fmt.Printf("Updating %d file(s) with the following changes:\n", len(allFiles))
+			fmt.Printf("Updating %d file(s) with changes:\n", len(allFiles))
 			for k, v := range updates {
 				fmt.Printf("  %s: %s\n", k, v)
 			}
 			fmt.Println()
 
-			var outputStr string
-			successCount := 0
-
 			for _, f := range allFiles {
 				if createBackup {
 					backupPath := f + ".backup"
-					if err := copyFile(f, backupPath); err != nil {
-						log.Printf("Warning: Could not create backup for %s: %v", f, err)
-					} else {
+					if err := copyFile(f, backupPath); err == nil {
 						fmt.Printf("✓ Backup created: %s\n", backupPath)
 					}
 				}
 
 				if err := metadata.Update(f, f, updates); err != nil {
-					log.Printf("✗ Error updating %s: %v", filepath.Base(f), err)
+					fmt.Printf("✗ Error updating %s: %v\n", filepath.Base(f), err)
 					continue
 				}
-
-				md, err := metadata.Read(f, false)
-				if err != nil {
-					log.Printf("Warning: Updated %s but couldn't read metadata: %v",
-						filepath.Base(f), err)
-				} else {
-					outputStr += parser.RenderMetadataWithHeader(filepath.Base(f), md)
-				}
-
 				fmt.Printf("✓ Updated: %s\n", filepath.Base(f))
-				successCount++
 			}
 
-			fmt.Printf("\n✓ Successfully updated %d of %d file(s)\n\n",
-				successCount, len(allFiles))
-			fmt.Print(outputStr)
-
-			if output != "" {
-				if err := os.WriteFile(output, []byte(outputStr), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
-				}
-				fmt.Printf("✓ Results written to %s\n", output)
-			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&file, "file", "", "Target EPUB file")
-	cmd.Flags().StringVar(&dir, "dir", "", "Target directory for batch update")
-	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file (JSON or YAML) with metadata updates")
+	cmd.Flags().StringVar(&dir, "dir", "", "Target directory")
+	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file with metadata updates")
 	cmd.Flags().StringVar(&series, "series", "", "Series name")
 	cmd.Flags().StringVar(&seriesIndex, "series-index", "", "Series index")
 	cmd.Flags().StringVar(&summary, "summary", "", "Book summary")
 	cmd.Flags().StringVar(&isbn, "isbn", "", "ISBN identifier")
-	cmd.Flags().StringVar(&author, "author", "", "Author/creator name")
+	cmd.Flags().StringVar(&author, "author", "", "Author name")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write results to file")
 	cmd.Flags().BoolVar(&createBackup, "backup", true, "Create .backup files")
 
@@ -295,31 +260,22 @@ func newEPUBCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Check EPUB file validity and structure",
-		Long: `Validates that EPUB files have proper structure:
-- META-INF/container.xml exists
-- OPF file exists at location specified in container.xml
-- OPF file has minimum required metadata (title, identifier, language)`,
-		Example: `  mdu epub check --file book.epub
-  mdu epub check --dir ./books --output report.txt`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if file == "" && dir == "" {
-				log.Fatal("Error: You must specify either --file or --dir")
+				return fmt.Errorf("you must specify either --file or --dir")
 			}
 
 			allFiles, err := getEPUBFiles(file, dir)
 			if err != nil {
-				log.Fatalf("Error getting EPUB files: %v", err)
+				return fmt.Errorf("getting EPUB files: %w", err)
 			}
 
 			var results strings.Builder
-			validCount := 0
-			invalidCount := 0
+			validCount, invalidCount := 0, 0
 
 			for _, f := range allFiles {
 				results.WriteString(fmt.Sprintf("\n=== Checking: %s ===\n", filepath.Base(f)))
-
 				md, err := metadata.Read(f, false)
-
 				if err != nil {
 					results.WriteString(fmt.Sprintf("❌ INVALID: %v\n", err))
 					invalidCount++
@@ -327,34 +283,23 @@ func newEPUBCheckCmd() *cobra.Command {
 				}
 
 				results.WriteString("✓ EPUB structure valid\n")
-				results.WriteString("✓ OPF file found and readable\n")
-				results.WriteString("✓ Minimum required metadata present\n")
-				results.WriteString("\nMetadata summary:\n")
 				results.WriteString(fmt.Sprintf("  Title: %s\n", md["title"]))
 				results.WriteString(fmt.Sprintf("  Author: %s\n", md["author"]))
-
-				for key, val := range md {
-					if key == "identifier" || strings.HasPrefix(key, "identifier:") {
-						results.WriteString(fmt.Sprintf("  Identifier: %s\n", val))
-						break
-					}
-				}
-
 				validCount++
 			}
 
 			results.WriteString("\n=== Summary ===\n")
-			results.WriteString(fmt.Sprintf("Valid: %d\n", validCount))
-			results.WriteString(fmt.Sprintf("Invalid: %d\n", invalidCount))
-
+			results.WriteString(fmt.Sprintf("Valid: %d\nInvalid: %d\n", validCount, invalidCount))
 			fmt.Print(results.String())
 
 			if output != "" {
 				if err := os.WriteFile(output, []byte(results.String()), 0644); err != nil {
-					log.Fatalf("Error writing output file: %v", err)
+					return fmt.Errorf("writing output file: %w", err)
 				}
 				fmt.Printf("\n✓ Check results written to %s\n", output)
 			}
+
+			return nil
 		},
 	}
 
@@ -371,4 +316,256 @@ func getEPUBFiles(file, dir string) ([]string, error) {
 		return parser.ListEPUBFiles(dir)
 	}
 	return []string{file}, nil
+}
+
+// Search RanobeDB API for novel titles and display results with relevance scores.
+func newRanobeSearchCmd() *cobra.Command {
+	var showURL bool
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search RanobeDB for a novel title and return best matches",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := strings.Join(args, " ")
+
+			fmt.Printf("\n🔍 Searching RanobeDB for: %s\n\n", query)
+
+			db := ranobedb.RanobeDB{}
+			search, err := db.SearchNovel(query)
+			if err != nil {
+				return fmt.Errorf("failed to search RanobeDB: %w", err)
+			}
+
+			if len(search.Series) == 0 {
+				fmt.Printf("No results found for: %s\n", query)
+				return nil
+			}
+
+			// ---- scoring ----
+			type scoredResult struct {
+				series ranobedb.Series
+				score  float64
+			}
+
+			scoredResults := make([]scoredResult, 0, len(search.Series))
+
+			for _, s := range search.Series {
+				score := parser.ScoreTitleTokens(query, s.Title)
+				scoredResults = append(scoredResults, scoredResult{
+					series: s,
+					score:  score,
+				})
+			}
+
+			// ---- sort ----
+			sort.Slice(scoredResults, func(i, j int) bool {
+				return scoredResults[i].score > scoredResults[j].score
+			})
+
+			// ---- calculate display width (FIXED UTF-8 ALIGNMENT) ----
+			maxTitleWidth := 20
+			for _, r := range scoredResults {
+				if w := runewidth.StringWidth(r.series.Title); w > maxTitleWidth {
+					maxTitleWidth = w
+				}
+			}
+
+			// optional clamp (prevents stupid long titles breaking layout)
+			if maxTitleWidth > 60 {
+				maxTitleWidth = 60
+			}
+
+			// ---- printer ----
+			printEntry := func(r scoredResult, highlight bool) {
+				title := r.series.Title
+
+				width := runewidth.StringWidth(title)
+				padding := maxTitleWidth - width
+				if padding < 0 {
+					padding = 0
+				}
+
+				fmt.Printf("%s%s | ID: %d\n",
+					title,
+					strings.Repeat(" ", padding),
+					r.series.ID,
+				)
+
+				if showURL {
+					fmt.Printf("  https://ranobedb.org/series/%d\n", r.series.ID)
+				}
+
+				if highlight {
+					fmt.Printf("  Best Match (Score: %.2f)\n", r.score)
+				}
+			}
+
+			// ---- best match ----
+			fmt.Println("Best Match:")
+			fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			printEntry(scoredResults[0], true)
+
+			// ---- others ----
+			if len(scoredResults) > 1 {
+				count := len(scoredResults) - 1
+				if count > 9 {
+					count = 9
+				}
+
+				fmt.Println("\nOther Matches:")
+				fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+				for i := 1; i <= count; i++ {
+					printEntry(scoredResults[i], false)
+				}
+			}
+
+			fmt.Println("\nUse with: mdu epub generate --ranobedb <id>")
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&showURL, "url", false, "Show RanobeDB URL")
+
+	return cmd
+}
+
+// Fetch full novel info from RanobeDB by ID, including metadata and book list and update file metadata
+func newEpubGenerateCmd() *cobra.Command {
+	var ranobeID int
+	var filePath string
+	var dirPath string
+
+	cmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate EPUB metadata using RanobeDB",
+		Long: `Fetch metadata from RanobeDB and generate OPF metadata.
+
+Usage:
+  mdu epub generate --ranobedb <id> <file|directory>
+  mdu epub generate --ranobedb <id> --file <file>
+  mdu epub generate --ranobedb <id> --dir <directory>`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if ranobeID == 0 {
+				return fmt.Errorf("--ranobedb is required")
+			}
+
+			// resolve target
+			if len(args) > 0 {
+				filePath = args[0]
+			}
+
+			if filePath == "" && dirPath == "" {
+				return fmt.Errorf("must provide a file or directory")
+			}
+
+			db := ranobedb.RanobeDB{}
+
+			fmt.Printf("Fetching metadata for series ID: %d\n", ranobeID)
+
+			novel, err := db.GetNovelInfo(strconv.Itoa(ranobeID))
+			if err != nil {
+				return fmt.Errorf("failed to fetch novel info: %w", err)
+			}
+
+			fmt.Println("Building OPF metadata...")
+			opf := metadata.BuildMetadataMap(novel)
+
+			// Apply to file
+			if filePath != "" {
+				fmt.Printf("Updating EPUB file: %s\n", filePath)
+
+				// Write to a temp file first
+				tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "*.epub.tmp")
+				if err != nil {
+					return fmt.Errorf("failed to create temp file: %w", err)
+				}
+				tmpPath := tmpFile.Name()
+				tmpFile.Close()
+
+				// Write updated metadata to temp
+				if err := metadata.WriteOPFToFile(filePath, opf, tmpPath); err != nil {
+					os.Remove(tmpPath)
+					return fmt.Errorf("failed to write metadata to temp file: %w", err)
+				}
+
+				// Verify the temp file is readable and metadata is not corrupted
+				if _, err := metadata.Read(tmpPath, false); err != nil {
+					os.Remove(tmpPath)
+					return fmt.Errorf("metadata verification failed, original file untouched: %w", err)
+				}
+
+				// Replace original with temp
+				if err := os.Rename(tmpPath, filePath); err != nil {
+					os.Remove(tmpPath)
+					return fmt.Errorf("failed to replace original file: %w", err)
+				}
+
+				fmt.Println("EPUB metadata updated successfully.")
+				return nil
+			}
+
+			// Apply to directory
+			if dirPath != "" {
+				fmt.Printf("Updating EPUB files in directory: %s\n", dirPath)
+
+				entries, err := os.ReadDir(dirPath)
+				if err != nil {
+					return fmt.Errorf("failed to read directory: %w", err)
+				}
+
+				for _, entry := range entries {
+					if entry.IsDir() || filepath.Ext(entry.Name()) != ".epub" {
+						continue
+					}
+
+					filePath := filepath.Join(dirPath, entry.Name())
+
+					// Write to temp first
+					tmpFile, err := os.CreateTemp(dirPath, "*.epub.tmp")
+					if err != nil {
+						return fmt.Errorf("failed to create temp file for %s: %w", entry.Name(), err)
+					}
+					tmpPath := tmpFile.Name()
+					tmpFile.Close()
+
+					if err := metadata.WriteOPFToFile(filePath, opf, tmpPath); err != nil {
+						os.Remove(tmpPath)
+						fmt.Printf("✗ Failed to update %s: %v\n", entry.Name(), err)
+						continue
+					}
+
+					// Verify
+					if _, err := metadata.Read(tmpPath, false); err != nil {
+						os.Remove(tmpPath)
+						fmt.Printf("✗ Verification failed for %s, original untouched: %v\n", entry.Name(), err)
+						continue
+					}
+
+					// Replace original
+					if err := os.Rename(tmpPath, filePath); err != nil {
+						os.Remove(tmpPath)
+						fmt.Printf("✗ Failed to replace %s: %v\n", entry.Name(), err)
+						continue
+					}
+
+					fmt.Printf("✓ Updated: %s\n", entry.Name())
+				}
+
+				fmt.Println("EPUB metadata updated successfully.")
+				return nil
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&ranobeID, "ranobedb", 0, "RanobeDB series ID (required)")
+	cmd.Flags().StringVar(&filePath, "file", "", "Target EPUB file")
+	cmd.Flags().StringVar(&dirPath, "dir", "", "Target directory containing EPUB files")
+
+	return cmd
 }

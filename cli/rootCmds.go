@@ -12,7 +12,7 @@ func NewRootCmd() *cobra.Command {
 Currently supports:
   - EPUB files (complete support)
   - PDF files (coming soon)
-  - ComicInfo.xml (coming soon)
+  - ComicInfo.xml
 
 Preserves original file structure and formatting.`,
 	}
