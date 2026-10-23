@@ -23,6 +23,7 @@ Preserves original file structure and formatting.`,
 	rootCmd.AddCommand(NewEPUBCmd())
 	// rootCmd.AddCommand(NewPDFCmd())      // Future
 	rootCmd.AddCommand(NewComicInfoCmd())
+	rootCmd.AddCommand(NewMangadexCmd())
 
 	// Add general commands
 	rootCmd.AddCommand(NewGenerateCmd())
