@@ -8,6 +8,8 @@ import (
 	"mdu/cli"
 )
 
+var Version = "dev"
+
 func init() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -28,7 +30,7 @@ func main() {
 	// Remove date/time prefix from log output
 	log.SetFlags(0)
 
-	if err := cli.NewRootCmd().Execute(); err != nil {
+	if err := cli.NewRootCmd(Version).Execute(); err != nil {
 		log.Fatal(err)
 	}
 }
