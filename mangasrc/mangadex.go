@@ -11,6 +11,7 @@ import (
 )
 
 var mangadexApiBaseUri string = "https://api.mangadex.org"
+var authConfig *AuthConfig
 
 // Generic MangaDex response
 type MangadexSearchResponse struct {
@@ -34,6 +35,31 @@ type MangadexTitleSearchResponse struct {
 // TitleMetadata fetches full manga metadata from MangaDex.
 // Requests cover_art relationship expansion so the cover filename is included
 // in the response without needing a separate API call.
+func init() {
+	if authConfig == nil {
+		if cfg, err := LoadAuthConfig(); err == nil {
+			authConfig = cfg
+		}
+	}
+}
+
+func doGet(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if authConfig == nil {
+		if cfg, err := LoadAuthConfig(); err == nil {
+			authConfig = cfg
+		}
+	}
+	if authConfig != nil {
+		authConfig.AddAuthHeader(req)
+	}
+	client := &http.Client{}
+	return client.Do(req)
+}
+
 func TitleMetadata(mangadexId string) (*MangadexTitleMetadata, error) {
 	if mangadexId == "" {
 		return nil, fmt.Errorf("manga ID is empty")
@@ -41,7 +67,7 @@ func TitleMetadata(mangadexId string) (*MangadexTitleMetadata, error) {
 
 	reqURL := fmt.Sprintf("%s/manga/%s?includes[]=cover_art", mangadexApiBaseUri, mangadexId)
 
-	res, err := http.Get(reqURL)
+	res, err := doGet(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -97,7 +123,7 @@ func CoverImageURL(mangadexID, filename, quality string) string {
 // raw bytes. The caller is responsible for determining the file extension from
 // the original filename.
 func DownloadCoverImage(coverURL string) ([]byte, error) {
-	res, err := http.Get(coverURL)
+	res, err := doGet(coverURL)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -127,7 +153,7 @@ func MangadexTitleSearch(name string) ([]MangadexTitleSearchResponse, error) {
 	// DEBUG: log final request URL
 	log.Printf("[Mangadex] Request URL: %s", mangaURL)
 
-	res, err := http.Get(mangaURL)
+	res, err := doGet(mangaURL)
 	if err != nil {
 		log.Printf("[Mangadex] HTTP request failed: %v", err)
 		return nil, fmt.Errorf("error requesting manga info: %w", err)

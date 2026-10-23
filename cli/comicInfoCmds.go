@@ -678,19 +678,27 @@ This command:
 				fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(allFiles), fileName)
 
 				// Extract chapter number from filename
-				chapterNum := parser.ExtractChapterNumber(fileName)
+				origChapterNum := parser.ExtractChapterNumber(fileName)
+				chapterNum := origChapterNum
 				if chapterNum == "" {
-					log.Printf("⚠️  Could not extract chapter number from '%s', skipping\n\n", fileName)
-					skippedCount++
-					resultsList = append(resultsList, procResult{fileName, "Skipped"})
-					continue
+					chapterNum = "1"
+					fmt.Printf("  ⚠️  No chapter number found in filename, treating as one-shot -> Number: %s\n", chapterNum)
+				} else {
+					fmt.Printf("  📄 Extracted chapter number: %s\n", chapterNum)
 				}
-				fmt.Printf("  📄 Extracted chapter number: %s\n", chapterNum)
 
 				// Create a copy of the base ComicInfo and update with chapter number
 				chapterComicInfo := *baseComicInfo
 				chapterComicInfo.Number = chapterNum
-				chapterComicInfo.Title = fmt.Sprintf("Chapter %s", chapterNum)
+				if origChapterNum == "" {
+					if chapterComicInfo.Series != "" {
+						chapterComicInfo.Title = chapterComicInfo.Series
+					} else {
+						chapterComicInfo.Title = strings.TrimSuffix(fileName, filepath.Ext(fileName))
+					}
+				} else {
+					chapterComicInfo.Title = fmt.Sprintf("Chapter %s", chapterComicInfo.Number)
+				}
 
 				// Process this chapter with integrity validation.
 				if err := processChapterWithIntegrity(cbzPath, &chapterComicInfo, coverImageBytes, coverFilename); err != nil {
