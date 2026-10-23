@@ -551,6 +551,78 @@ This command:
 				return fmt.Errorf("failed to convert MangaDex metadata to ComicInfo: %w", err)
 			}
 
+			// If series looks like it might be set from wrong source, try to prefer English title explicitly
+			// Also collect all English titles from title and altTitles for user choice if multiple
+			var englishOptions []string
+			if titleMap, ok := mangadexMetadata.Attributes["title"].(map[string]interface{}); ok {
+				if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
+					englishOptions = append(englishOptions, enTitle)
+				}
+			}
+			if altTitles, ok := mangadexMetadata.Attributes["altTitles"].([]interface{}); ok {
+				for _, alt := range altTitles {
+					if altMap, ok := alt.(map[string]interface{}); ok {
+						if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+							// avoid duplicates
+							found := false
+							for _, ex := range englishOptions {
+								if ex == enTitle {
+									found = true
+									break
+								}
+							}
+							if !found {
+								englishOptions = append(englishOptions, enTitle)
+							}
+						}
+					}
+				}
+			}
+			if len(englishOptions) > 1 {
+				fmt.Println("\nMultiple English titles found:")
+				for i, opt := range englishOptions {
+					fmt.Printf("  %d) %s\n", i+1, opt)
+				}
+				fmt.Print("Select series title to use for all files (1): ")
+				var choice string
+				fmt.Scanln(&choice)
+				// try to parse
+				var sel int
+				_, err := fmt.Sscanf(choice, "%d", &sel)
+				if err == nil && sel >= 1 && sel <= len(englishOptions) {
+					baseComicInfo.Series = englishOptions[sel-1]
+					baseComicInfo.Title = englishOptions[sel-1]
+					baseComicInfo.SeriesSort = englishOptions[sel-1]
+				} else {
+					baseComicInfo.Series = englishOptions[0]
+					baseComicInfo.Title = englishOptions[0]
+					baseComicInfo.SeriesSort = englishOptions[0]
+				}
+			} else if len(englishOptions) == 1 {
+				baseComicInfo.Series = englishOptions[0]
+				baseComicInfo.Title = englishOptions[0]
+				baseComicInfo.SeriesSort = englishOptions[0]
+			} else if baseComicInfo.Series == "" {
+				// try to get any English from altTitles as fallback
+				if altTitles, ok := mangadexMetadata.Attributes["altTitles"].([]interface{}); ok {
+					for _, alt := range altTitles {
+						if altMap, ok := alt.(map[string]interface{}); ok {
+							if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+								baseComicInfo.Series = enTitle
+								baseComicInfo.Title = enTitle
+								baseComicInfo.SeriesSort = enTitle
+								break
+							}
+						}
+					}
+				}
+			} else {
+				// ensure it's English if possible - prefer English options we found
+				if len(englishOptions) == 0 {
+					// no English found anywhere - but user says must be English; still prefer what we have
+				}
+			}
+
 			// Fetch actual author/artist names
 			if err := enrichComicInfoWithAuthors(baseComicInfo, mangadexMetadata); err != nil {
 				log.Printf("⚠️  Warning: Could not fetch all author names: %v", err)

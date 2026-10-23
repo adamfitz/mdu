@@ -223,32 +223,84 @@ func MangaDexToComicInfo(md *MangaDexTitleMetadata) (*ComicInfo, error) {
 		Manga: "Yes",
 	}
 
-	// Extract main title
+	// Extract main title - prefer English
+	var englishTitle string
+	var primaryTitle string
+
 	if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
 		if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
-			comic.Title = enTitle
-			comic.Series = enTitle
-			comic.SeriesSort = enTitle
-		} else {
-			// Try other languages if English not available
+			englishTitle = enTitle
+		}
+		if englishTitle == "" {
 			for _, lang := range []string{"ja", "ja-ro", "ko", "ko-ro", "zh", "zh-ro"} {
 				if t, ok := titleMap[lang].(string); ok && t != "" {
-					comic.Title = t
-					comic.Series = t
-					comic.SeriesSort = t
+					primaryTitle = t
+					break
+				}
+			}
+			if primaryTitle == "" {
+				for _, v := range titleMap {
+					if t, ok := v.(string); ok && t != "" {
+						primaryTitle = t
+						break
+					}
+				}
+			}
+		} else {
+			for _, lang := range []string{"ja", "ja-ro", "ko", "ko-ro", "zh", "zh-ro"} {
+				if t, ok := titleMap[lang].(string); ok && t != "" && t != englishTitle {
+					primaryTitle = t
 					break
 				}
 			}
 		}
-	} else if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
+	}
+
+	if englishTitle == "" {
+		if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
+			for _, alt := range altTitles {
+				if altMap, ok := alt.(map[string]interface{}); ok {
+					if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+						englishTitle = enTitle
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if englishTitle != "" {
+		comic.Title = englishTitle
+		comic.Series = englishTitle
+		comic.SeriesSort = englishTitle
+		if primaryTitle != "" && primaryTitle != englishTitle {
+			comic.LocalizedSeries = primaryTitle
+		}
+	} else if primaryTitle != "" {
+		comic.Title = primaryTitle
+		comic.Series = primaryTitle
+		comic.SeriesSort = primaryTitle
+	} else if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
+		for _, v := range titleMap {
+			if t, ok := v.(string); ok && t != "" {
+				comic.Title = t
+				comic.Series = t
+				comic.SeriesSort = t
+				break
+			}
+		}
+	} else if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok && len(altTitles) > 0 {
 		for _, alt := range altTitles {
 			if altMap, ok := alt.(map[string]interface{}); ok {
-				if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
-					comic.Title = enTitle
-					comic.Series = enTitle
-					comic.SeriesSort = enTitle
-					break
+				for _, v := range altMap {
+					if t, ok := v.(string); ok && t != "" {
+						comic.Title = t
+						comic.Series = t
+						comic.SeriesSort = t
+						break
+					}
 				}
+				break
 			}
 		}
 	}

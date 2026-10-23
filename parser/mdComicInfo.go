@@ -94,30 +94,52 @@ func MangaDexToComicInfo(md *mangasrc.MangadexTitleMetadata) (*ComicInfo, error)
 		Manga: "Yes", // MangaDex is for manga
 	}
 
-	// Extract main title
+	// Extract main title - prefer English
+	foundEnglish := false
 	if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
 		if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
 			comic.Title = enTitle
 			comic.Series = enTitle
 			comic.SeriesSort = enTitle
-		} else {
+			foundEnglish = true
+		}
+	}
+	if !foundEnglish {
+		if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
+			for _, alt := range altTitles {
+				if altMap, ok := alt.(map[string]interface{}); ok {
+					if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+						comic.Title = enTitle
+						comic.Series = enTitle
+						comic.SeriesSort = enTitle
+						foundEnglish = true
+						break
+					}
+				}
+			}
+		}
+	}
+	if !foundEnglish {
+		if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
 			for _, lang := range []string{"ja", "ja-ro", "ko", "ko-ro", "zh", "zh-ro"} {
 				if t, ok := titleMap[lang].(string); ok && t != "" {
 					comic.Title = t
 					comic.Series = t
 					comic.SeriesSort = t
+					foundEnglish = true
 					break
 				}
 			}
-		}
-	} else if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
-		for _, alt := range altTitles {
-			if altMap, ok := alt.(map[string]interface{}); ok {
-				if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
-					comic.Title = enTitle
-					comic.Series = enTitle
-					comic.SeriesSort = enTitle
-					break
+			if !foundEnglish {
+				// take any first title
+				for _, v := range titleMap {
+					if t, ok := v.(string); ok && t != "" {
+						comic.Title = t
+						comic.Series = t
+						comic.SeriesSort = t
+						foundEnglish = true
+						break
+					}
 				}
 			}
 		}
