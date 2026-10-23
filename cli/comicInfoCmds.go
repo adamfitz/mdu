@@ -140,7 +140,7 @@ All ComicInfo.xml fields are displayed by default.`,
 
 func newComicInfoUpdateCmd() *cobra.Command {
 	var file, dir, output, inputFile string
-	var series, number, volume, summary, writer, publisher string
+	var series, seriesSort, localizedSeries, number, volume, count, summary, writer, publisher, genre, tags, web, language, ageRating, format, manga, imprint, seriesGroup string
 
 	cmd := &cobra.Command{
 		Use:   "update [file|dir]",
@@ -152,7 +152,7 @@ You can specify metadata using either:
   2. An input file (--input) in JSON or YAML format`,
 		Example: `  mdu comicinfo update comic.cbz --writer "John Doe" --series "Amazing Comics"
   mdu comicinfo update --file comic.cbz --writer "John Doe"
-  mdu comicinfo update --dir ./comics --input metadata.json`,
+  mdu comicinfo update --dir ./comics --series "My Series"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Support positional argument
 			if len(args) > 0 && file == "" && dir == "" {
@@ -183,6 +183,42 @@ You can specify metadata using either:
 				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
 			} else {
 				updates = buildComicInfoUpdatesMap(series, number, volume, summary, writer, publisher)
+				if seriesSort != "" {
+					updates["SeriesSort"] = seriesSort
+				}
+				if localizedSeries != "" {
+					updates["LocalizedSeries"] = localizedSeries
+				}
+				if count != "" {
+					updates["Count"] = count
+				}
+				if genre != "" {
+					updates["Genre"] = genre
+				}
+				if tags != "" {
+					updates["Tags"] = tags
+				}
+				if web != "" {
+					updates["Web"] = web
+				}
+				if language != "" {
+					updates["LanguageISO"] = language
+				}
+				if ageRating != "" {
+					updates["AgeRating"] = ageRating
+				}
+				if format != "" {
+					updates["Format"] = format
+				}
+				if manga != "" {
+					updates["Manga"] = manga
+				}
+				if imprint != "" {
+					updates["Imprint"] = imprint
+				}
+				if seriesGroup != "" {
+					updates["SeriesGroup"] = seriesGroup
+				}
 			}
 
 			if len(updates) == 0 {
@@ -240,11 +276,23 @@ You can specify metadata using either:
 	cmd.Flags().StringVar(&dir, "dir", "", "Target directory for batch update")
 	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file (JSON or YAML) with metadata updates")
 	cmd.Flags().StringVar(&series, "series", "", "Series name")
+	cmd.Flags().StringVar(&seriesSort, "series-sort", "", "Series sort name")
+	cmd.Flags().StringVar(&localizedSeries, "localized-series", "", "Localized series name")
 	cmd.Flags().StringVar(&number, "number", "", "Issue number")
 	cmd.Flags().StringVar(&volume, "volume", "", "Volume number")
+	cmd.Flags().StringVar(&count, "count", "", "Total count")
 	cmd.Flags().StringVar(&summary, "summary", "", "Issue summary")
 	cmd.Flags().StringVar(&writer, "writer", "", "Writer name")
 	cmd.Flags().StringVar(&publisher, "publisher", "", "Publisher name")
+	cmd.Flags().StringVar(&genre, "genre", "", "Genre")
+	cmd.Flags().StringVar(&tags, "tags", "", "Tags")
+	cmd.Flags().StringVar(&web, "web", "", "Web link")
+	cmd.Flags().StringVar(&language, "language", "", "Language ISO")
+	cmd.Flags().StringVar(&ageRating, "age-rating", "", "Age rating")
+	cmd.Flags().StringVar(&format, "format", "", "Format")
+	cmd.Flags().StringVar(&manga, "manga", "", "Manga (Yes/No)")
+	cmd.Flags().StringVar(&imprint, "imprint", "", "Imprint")
+	cmd.Flags().StringVar(&seriesGroup, "series-group", "", "Series group/collection")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write results to file")
 
 	return cmd
@@ -501,6 +549,78 @@ This command:
 			baseComicInfo, err := parser.MangaDexToComicInfo(mangadexMetadata)
 			if err != nil {
 				return fmt.Errorf("failed to convert MangaDex metadata to ComicInfo: %w", err)
+			}
+
+			// If series looks like it might be set from wrong source, try to prefer English title explicitly
+			// Also collect all English titles from title and altTitles for user choice if multiple
+			var englishOptions []string
+			if titleMap, ok := mangadexMetadata.Attributes["title"].(map[string]interface{}); ok {
+				if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
+					englishOptions = append(englishOptions, enTitle)
+				}
+			}
+			if altTitles, ok := mangadexMetadata.Attributes["altTitles"].([]interface{}); ok {
+				for _, alt := range altTitles {
+					if altMap, ok := alt.(map[string]interface{}); ok {
+						if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+							// avoid duplicates
+							found := false
+							for _, ex := range englishOptions {
+								if ex == enTitle {
+									found = true
+									break
+								}
+							}
+							if !found {
+								englishOptions = append(englishOptions, enTitle)
+							}
+						}
+					}
+				}
+			}
+			if len(englishOptions) > 1 {
+				fmt.Println("\nMultiple English titles found:")
+				for i, opt := range englishOptions {
+					fmt.Printf("  %d) %s\n", i+1, opt)
+				}
+				fmt.Print("Select series title to use for all files (1): ")
+				var choice string
+				fmt.Scanln(&choice)
+				// try to parse
+				var sel int
+				_, err := fmt.Sscanf(choice, "%d", &sel)
+				if err == nil && sel >= 1 && sel <= len(englishOptions) {
+					baseComicInfo.Series = englishOptions[sel-1]
+					baseComicInfo.Title = englishOptions[sel-1]
+					baseComicInfo.SeriesSort = englishOptions[sel-1]
+				} else {
+					baseComicInfo.Series = englishOptions[0]
+					baseComicInfo.Title = englishOptions[0]
+					baseComicInfo.SeriesSort = englishOptions[0]
+				}
+			} else if len(englishOptions) == 1 {
+				baseComicInfo.Series = englishOptions[0]
+				baseComicInfo.Title = englishOptions[0]
+				baseComicInfo.SeriesSort = englishOptions[0]
+			} else if baseComicInfo.Series == "" {
+				// try to get any English from altTitles as fallback
+				if altTitles, ok := mangadexMetadata.Attributes["altTitles"].([]interface{}); ok {
+					for _, alt := range altTitles {
+						if altMap, ok := alt.(map[string]interface{}); ok {
+							if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+								baseComicInfo.Series = enTitle
+								baseComicInfo.Title = enTitle
+								baseComicInfo.SeriesSort = enTitle
+								break
+							}
+						}
+					}
+				}
+			} else {
+				// ensure it's English if possible - prefer English options we found
+				if len(englishOptions) == 0 {
+					// no English found anywhere - but user says must be English; still prefer what we have
+				}
 			}
 
 			// Fetch actual author/artist names

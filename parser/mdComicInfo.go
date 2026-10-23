@@ -21,6 +21,8 @@ type ComicInfo struct {
 	// Basic Information
 	Title           string `xml:"Title,omitempty"`
 	Series          string `xml:"Series,omitempty"`
+	SeriesSort      string `xml:"SeriesSort,omitempty"`
+	LocalizedSeries string `xml:"LocalizedSeries,omitempty"`
 	Number          string `xml:"Number,omitempty"`
 	Count           int    `xml:"Count,omitempty"`
 	Volume          string `xml:"Volume,omitempty"`
@@ -64,7 +66,10 @@ type ComicInfo struct {
 	// Additional
 	SeriesGroup     string `xml:"SeriesGroup,omitempty"`
 	StoryArc        string `xml:"StoryArc,omitempty"`
+	StoryArcNumber  string `xml:"StoryArcNumber,omitempty"`
 	ScanInformation string `xml:"ScanInformation,omitempty"`
+	GTIN            string `xml:"GTIN,omitempty"`
+	Imprint         string `xml:"Imprint,omitempty"`
 }
 
 // ComicPageInfo represents a single page entry in the ComicInfo Pages block.
@@ -89,11 +94,54 @@ func MangaDexToComicInfo(md *mangasrc.MangadexTitleMetadata) (*ComicInfo, error)
 		Manga: "Yes", // MangaDex is for manga
 	}
 
-	// Extract main title
+	// Extract main title - prefer English
+	foundEnglish := false
 	if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
 		if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
 			comic.Title = enTitle
 			comic.Series = enTitle
+			comic.SeriesSort = enTitle
+			foundEnglish = true
+		}
+	}
+	if !foundEnglish {
+		if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
+			for _, alt := range altTitles {
+				if altMap, ok := alt.(map[string]interface{}); ok {
+					if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+						comic.Title = enTitle
+						comic.Series = enTitle
+						comic.SeriesSort = enTitle
+						foundEnglish = true
+						break
+					}
+				}
+			}
+		}
+	}
+	if !foundEnglish {
+		if titleMap, ok := md.Attributes["title"].(map[string]interface{}); ok {
+			for _, lang := range []string{"ja", "ja-ro", "ko", "ko-ro", "zh", "zh-ro"} {
+				if t, ok := titleMap[lang].(string); ok && t != "" {
+					comic.Title = t
+					comic.Series = t
+					comic.SeriesSort = t
+					foundEnglish = true
+					break
+				}
+			}
+			if !foundEnglish {
+				// take any first title
+				for _, v := range titleMap {
+					if t, ok := v.(string); ok && t != "" {
+						comic.Title = t
+						comic.Series = t
+						comic.SeriesSort = t
+						foundEnglish = true
+						break
+					}
+				}
+			}
 		}
 	}
 
