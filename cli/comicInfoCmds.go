@@ -677,12 +677,16 @@ This command:
 				fileName := filepath.Base(cbzPath)
 				fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(allFiles), fileName)
 
-				// Extract chapter number from filename
+				// Extract chapter/volume number from filename
 				origChapterNum := parser.ExtractChapterNumber(fileName)
+				volNum := parser.ExtractVolumeNumber(fileName)
 				chapterNum := origChapterNum
-				if chapterNum == "" {
+				if chapterNum == "" && volNum != "" {
+					chapterNum = volNum
+					fmt.Printf("  📦 Extracted volume number: %s (using as Number)\n", volNum)
+				} else if chapterNum == "" {
 					chapterNum = "1"
-					fmt.Printf("  ⚠️  No chapter number found in filename, treating as one-shot -> Number: %s\n", chapterNum)
+					fmt.Printf("  ⚠️  No chapter/volume number found in filename, treating as one-shot -> Number: %s\n", chapterNum)
 				} else {
 					fmt.Printf("  📄 Extracted chapter number: %s\n", chapterNum)
 				}
@@ -690,7 +694,16 @@ This command:
 				// Create a copy of the base ComicInfo and update with chapter number
 				chapterComicInfo := *baseComicInfo
 				chapterComicInfo.Number = chapterNum
-				if origChapterNum == "" {
+				if volNum != "" {
+					chapterComicInfo.Volume = volNum
+				}
+				if origChapterNum == "" && volNum != "" {
+					if chapterComicInfo.Series != "" {
+						chapterComicInfo.Title = fmt.Sprintf("%s - Volume %s", chapterComicInfo.Series, volNum)
+					} else {
+						chapterComicInfo.Title = strings.TrimSuffix(fileName, filepath.Ext(fileName))
+					}
+				} else if origChapterNum == "" {
 					if chapterComicInfo.Series != "" {
 						chapterComicInfo.Title = chapterComicInfo.Series
 					} else {
