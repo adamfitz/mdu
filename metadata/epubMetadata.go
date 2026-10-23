@@ -367,11 +367,17 @@ func updateMetadataField(metadata, key, value string) string {
 	case "isbn":
 		return updateISBNIdentifier(metadata, value)
 
-	case "calibre:series":
+	case "calibre:series", "series":
 		return updateOrAddCalibreMeta(metadata, "calibre:series", value)
 
-	case "calibre:series_index":
+	case "calibre:series_index", "series_index", "seriesindex", "volume":
 		return updateOrAddCalibreMeta(metadata, "calibre:series_index", value)
+
+	case "belongs-to-collection", "collection":
+		return updateOrAddBelongsToCollection(metadata, value)
+
+	case "group-position", "group_position", "collection_index":
+		return updateOrAddBelongsToCollectionIndex(metadata, value)
 
 	case "subject", "genre", "subjects":
 		// Update dc:subject (maps to Genres in Kavita)
@@ -623,6 +629,73 @@ addNew:
 
 	newTag := fmt.Sprintf(`    <meta name="%s" content="%s"/>
   `, name, value)
+	return metadata[:closeMetadata] + newTag + metadata[closeMetadata:]
+}
+
+func updateOrAddBelongsToCollection(metadata, value string) string {
+	// EPUB3 style: <meta property="belongs-to-collection">Collection Name</meta>
+	searchPattern := `property="belongs-to-collection"`
+	lowerMeta := strings.ToLower(metadata)
+	lowerPattern := strings.ToLower(searchPattern)
+	idx := strings.Index(lowerMeta, lowerPattern)
+	if idx != -1 {
+		startIdx := strings.LastIndex(metadata[:idx], "<meta")
+		if startIdx == -1 {
+			goto addNew
+		}
+		endSearch := metadata[startIdx:]
+		normalCloseIdx := strings.Index(endSearch, "</meta>")
+		if normalCloseIdx == -1 {
+			goto addNew
+		}
+		endIdx := startIdx + normalCloseIdx + len("</meta>")
+		newTag := fmt.Sprintf(`<meta property="belongs-to-collection">%s</meta>`, value)
+		before := metadata[:startIdx]
+		after := metadata[endIdx:]
+		return before + newTag + after
+	}
+
+addNew:
+	closeMetadata := strings.Index(metadata, "</metadata>")
+	if closeMetadata == -1 {
+		return metadata
+	}
+	newTag := fmt.Sprintf(`    <meta property="belongs-to-collection">%s</meta>
+  `, value)
+	return metadata[:closeMetadata] + newTag + metadata[closeMetadata:]
+}
+
+func updateOrAddBelongsToCollectionIndex(metadata, value string) string {
+	// This is a refined meta; Kavita also accepts group-position in some forms
+	// Try to add/update a meta with property group-position
+	searchPattern := `property="group-position"`
+	lowerMeta := strings.ToLower(metadata)
+	lowerPattern := strings.ToLower(searchPattern)
+	idx := strings.Index(lowerMeta, lowerPattern)
+	if idx != -1 {
+		startIdx := strings.LastIndex(metadata[:idx], "<meta")
+		if startIdx == -1 {
+			goto addNew
+		}
+		endSearch := metadata[startIdx:]
+		normalCloseIdx := strings.Index(endSearch, "</meta>")
+		if normalCloseIdx == -1 {
+			goto addNew
+		}
+		endIdx := startIdx + normalCloseIdx + len("</meta>")
+		newTag := fmt.Sprintf(`<meta property="group-position">%s</meta>`, value)
+		before := metadata[:startIdx]
+		after := metadata[endIdx:]
+		return before + newTag + after
+	}
+
+addNew:
+	closeMetadata := strings.Index(metadata, "</metadata>")
+	if closeMetadata == -1 {
+		return metadata
+	}
+	newTag := fmt.Sprintf(`    <meta property="group-position">%s</meta>
+  `, value)
 	return metadata[:closeMetadata] + newTag + metadata[closeMetadata:]
 }
 

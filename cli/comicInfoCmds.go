@@ -140,7 +140,7 @@ All ComicInfo.xml fields are displayed by default.`,
 
 func newComicInfoUpdateCmd() *cobra.Command {
 	var file, dir, output, inputFile string
-	var series, number, volume, summary, writer, publisher string
+	var series, seriesSort, localizedSeries, number, volume, count, summary, writer, publisher, genre, tags, web, language, ageRating, format, manga, imprint, seriesGroup string
 
 	cmd := &cobra.Command{
 		Use:   "update [file|dir]",
@@ -152,7 +152,7 @@ You can specify metadata using either:
   2. An input file (--input) in JSON or YAML format`,
 		Example: `  mdu comicinfo update comic.cbz --writer "John Doe" --series "Amazing Comics"
   mdu comicinfo update --file comic.cbz --writer "John Doe"
-  mdu comicinfo update --dir ./comics --input metadata.json`,
+  mdu comicinfo update --dir ./comics --series "My Series"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Support positional argument
 			if len(args) > 0 && file == "" && dir == "" {
@@ -183,6 +183,42 @@ You can specify metadata using either:
 				fmt.Printf("✓ Loaded metadata from input file: %s\n", inputFile)
 			} else {
 				updates = buildComicInfoUpdatesMap(series, number, volume, summary, writer, publisher)
+				if seriesSort != "" {
+					updates["SeriesSort"] = seriesSort
+				}
+				if localizedSeries != "" {
+					updates["LocalizedSeries"] = localizedSeries
+				}
+				if count != "" {
+					updates["Count"] = count
+				}
+				if genre != "" {
+					updates["Genre"] = genre
+				}
+				if tags != "" {
+					updates["Tags"] = tags
+				}
+				if web != "" {
+					updates["Web"] = web
+				}
+				if language != "" {
+					updates["LanguageISO"] = language
+				}
+				if ageRating != "" {
+					updates["AgeRating"] = ageRating
+				}
+				if format != "" {
+					updates["Format"] = format
+				}
+				if manga != "" {
+					updates["Manga"] = manga
+				}
+				if imprint != "" {
+					updates["Imprint"] = imprint
+				}
+				if seriesGroup != "" {
+					updates["SeriesGroup"] = seriesGroup
+				}
 			}
 
 			if len(updates) == 0 {
@@ -240,11 +276,23 @@ You can specify metadata using either:
 	cmd.Flags().StringVar(&dir, "dir", "", "Target directory for batch update")
 	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "Input file (JSON or YAML) with metadata updates")
 	cmd.Flags().StringVar(&series, "series", "", "Series name")
+	cmd.Flags().StringVar(&seriesSort, "series-sort", "", "Series sort name")
+	cmd.Flags().StringVar(&localizedSeries, "localized-series", "", "Localized series name")
 	cmd.Flags().StringVar(&number, "number", "", "Issue number")
 	cmd.Flags().StringVar(&volume, "volume", "", "Volume number")
+	cmd.Flags().StringVar(&count, "count", "", "Total count")
 	cmd.Flags().StringVar(&summary, "summary", "", "Issue summary")
 	cmd.Flags().StringVar(&writer, "writer", "", "Writer name")
 	cmd.Flags().StringVar(&publisher, "publisher", "", "Publisher name")
+	cmd.Flags().StringVar(&genre, "genre", "", "Genre")
+	cmd.Flags().StringVar(&tags, "tags", "", "Tags")
+	cmd.Flags().StringVar(&web, "web", "", "Web link")
+	cmd.Flags().StringVar(&language, "language", "", "Language ISO")
+	cmd.Flags().StringVar(&ageRating, "age-rating", "", "Age rating")
+	cmd.Flags().StringVar(&format, "format", "", "Format")
+	cmd.Flags().StringVar(&manga, "manga", "", "Manga (Yes/No)")
+	cmd.Flags().StringVar(&imprint, "imprint", "", "Imprint")
+	cmd.Flags().StringVar(&seriesGroup, "series-group", "", "Series group/collection")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Write results to file")
 
 	return cmd

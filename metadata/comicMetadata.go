@@ -21,6 +21,8 @@ type ComicInfo struct {
 	// Basic Information
 	Title           string `xml:"Title,omitempty"`
 	Series          string `xml:"Series,omitempty"`
+	SeriesSort      string `xml:"SeriesSort,omitempty"`
+	LocalizedSeries string `xml:"LocalizedSeries,omitempty"`
 	Number          string `xml:"Number,omitempty"`
 	Count           int    `xml:"Count,omitempty"`
 	Volume          string `xml:"Volume,omitempty"`
@@ -64,7 +66,10 @@ type ComicInfo struct {
 	// Additional
 	SeriesGroup     string `xml:"SeriesGroup,omitempty"`
 	StoryArc        string `xml:"StoryArc,omitempty"`
+	StoryArcNumber  string `xml:"StoryArcNumber,omitempty"`
 	ScanInformation string `xml:"ScanInformation,omitempty"`
+	GTIN            string `xml:"GTIN,omitempty"`
+	Imprint         string `xml:"Imprint,omitempty"`
 }
 
 // ComicPageInfo represents a single page entry in the ComicInfo Pages block.
@@ -223,6 +228,28 @@ func MangaDexToComicInfo(md *MangaDexTitleMetadata) (*ComicInfo, error) {
 		if enTitle, ok := titleMap["en"].(string); ok && enTitle != "" {
 			comic.Title = enTitle
 			comic.Series = enTitle
+			comic.SeriesSort = enTitle
+		} else {
+			// Try other languages if English not available
+			for _, lang := range []string{"ja", "ja-ro", "ko", "ko-ro", "zh", "zh-ro"} {
+				if t, ok := titleMap[lang].(string); ok && t != "" {
+					comic.Title = t
+					comic.Series = t
+					comic.SeriesSort = t
+					break
+				}
+			}
+		}
+	} else if altTitles, ok := md.Attributes["altTitles"].([]interface{}); ok {
+		for _, alt := range altTitles {
+			if altMap, ok := alt.(map[string]interface{}); ok {
+				if enTitle, ok := altMap["en"].(string); ok && enTitle != "" {
+					comic.Title = enTitle
+					comic.Series = enTitle
+					comic.SeriesSort = enTitle
+					break
+				}
+			}
 		}
 	}
 
@@ -476,18 +503,44 @@ func applyComicInfoUpdates(comic *ComicInfo, updates map[string]string) {
 			comic.Title = value
 		case "series":
 			comic.Series = value
+		case "seriessort", "series_sort":
+			comic.SeriesSort = value
+		case "localizedseries", "localized_series":
+			comic.LocalizedSeries = value
 		case "number":
 			comic.Number = value
+		case "count":
+			// try to parse int
+			// ignore parse errors
+			var c int
+			fmt.Sscanf(value, "%d", &c)
+			if c != 0 || value == "0" {
+				comic.Count = c
+			}
 		case "volume":
 			comic.Volume = value
 		case "summary":
 			comic.Summary = value
+		case "notes":
+			comic.Notes = value
 		case "writer", "author":
 			comic.Writer = value
 		case "penciller":
 			comic.Penciller = value
+		case "inker":
+			comic.Inker = value
+		case "colorist":
+			comic.Colorist = value
+		case "letterer":
+			comic.Letterer = value
+		case "coverartist":
+			comic.CoverArtist = value
+		case "editor":
+			comic.Editor = value
 		case "publisher":
 			comic.Publisher = value
+		case "imprint":
+			comic.Imprint = value
 		case "genre":
 			comic.Genre = value
 		case "tags":
@@ -496,8 +549,40 @@ func applyComicInfoUpdates(comic *ComicInfo, updates map[string]string) {
 			comic.Web = value
 		case "languageiso", "language":
 			comic.LanguageISO = value
+		case "format":
+			comic.Format = value
 		case "agerating":
 			comic.AgeRating = value
+		case "manga":
+			comic.Manga = value
+		case "blackandwhite":
+			comic.BlackAndWhite = value
+		case "seriesgroup":
+			comic.SeriesGroup = value
+		case "storyarc":
+			comic.StoryArc = value
+		case "storyarcnumber":
+			comic.StoryArcNumber = value
+		case "scaninformation":
+			comic.ScanInformation = value
+		case "gtin":
+			comic.GTIN = value
+		case "year":
+			var y int
+			fmt.Sscanf(value, "%d", &y)
+			comic.Year = y
+		case "month":
+			var m int
+			fmt.Sscanf(value, "%d", &m)
+			comic.Month = m
+		case "day":
+			var d int
+			fmt.Sscanf(value, "%d", &d)
+			comic.Day = d
+		case "alternateseries":
+			comic.AlternateSeries = value
+		case "alternatenumber":
+			comic.AlternateNumber = value
 		}
 	}
 }
